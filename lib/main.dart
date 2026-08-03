@@ -717,13 +717,14 @@ class _DashboardPageState extends State<DashboardPage> {
   Map<String, dynamic> data = {};
   bool loading = true;
   Timer? _autoRefreshTimer;
+  int _activeSubTab = 0; // 0: P&L Breakdown, 1: Positions, 2: Cycle History, 3: Orders
 
   @override
   void initState() {
     super.initState();
     refresh();
-    // Auto refresh every 5 seconds so live bot cycles show up dynamically
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
+    // Auto refresh every 3 seconds so live bot cycles show up dynamically
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) => refresh());
   }
 
   @override
@@ -748,432 +749,878 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Future<void> _toggleBotStatus() async {
+    final isRunning = data['running'] == true;
+    if (isRunning) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Stop MaxAlpha Bot?'),
+          content: const Text('The bot will safely complete its current cycle and stop trading.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xffef4444)),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Stop Engine'),
+            ),
+          ],
+        ),
+      );
+      if (confirm == true) {
+        await widget.session.api.stop();
+        await refresh();
+      }
+    } else {
+      final input = TextEditingController();
+      final raw = await showDialog<String?>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Start MaxAlpha Engine'),
+          content: TextField(
+            controller: input,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              hintText: 'Wallet budget (leave empty for default ₹50,000)',
+              labelText: 'Trading Budget (₹)',
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xff22c55e)),
+              onPressed: () => Navigator.pop(ctx, input.text),
+              child: const Text('Start Trading'),
+            ),
+          ],
+        ),
+      );
+      if (raw != null) {
+        final amount = raw.trim().isEmpty ? null : double.tryParse(raw.replaceAll(',', ''));
+        await widget.session.api.start(amount);
+        await refresh();
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final historyList = (data['history'] as List?) ?? [];
     final positionsList = (data['positions_detail'] as List?) ?? [];
+    final tradeStats = (data['trade_stats'] as Map<String, dynamic>?) ?? {};
+    final ordersList = (tradeStats['order_history'] as List?) ?? (tradeStats['closed_trades'] as List?) ?? [];
     final isRunning = data['running'] == true;
-    final regimeStr = (data['regime'] as String?) ?? 'Awaiting first cycle';
+    final regimeStr = (data['regime'] as String?) ?? 'NEUTRAL';
+    final regimeScore = num.tryParse(data['regime_score']?.toString() ?? '0.5') ?? 0.5;
+    
     final totalVal = num.tryParse(data['total']?.toString() ?? '0') ?? 0;
     final cashVal = num.tryParse(data['cash']?.toString() ?? '0') ?? 0;
     final investedVal = num.tryParse(data['invested']?.toString() ?? '0') ?? (totalVal - cashVal > 0 ? totalVal - cashVal : 0);
-    final posCount = data['positions'] ?? 0;
 
     final t1 = num.tryParse(data['tier1_usd']?.toString() ?? '0') ?? 0;
     final t2 = num.tryParse(data['tier2_usd']?.toString() ?? '0') ?? 0;
     final t3 = num.tryParse(data['tier3_usd']?.toString() ?? '0') ?? 0;
 
-    return Container(
-      color: isDark ? const Color(0xff07111f) : const Color(0xfff5f7fb),
-      child: RefreshIndicator(
+    // Calculate session start value from history or total
+    final startVal = historyList.isNotEmpty
+        ? (num.tryParse(historyList.first['wallet_cap']?.toString() ?? historyList.first['total_usd']?.toString() ?? totalVal.toString()) ?? totalVal)
+        : totalVal;
+    final sessionPnl = totalVal > 0 && startVal > 0 ? totalVal - startVal : 0.0;
+    final sessionPct = startVal > 0 ? (sessionPnl / startVal * 100) : 0.0;
+
+    // Calculate unrealized P&L and profitable sellers
+    num openPnl = 0;
+    int winnersCount = 0;
+    for (final pos in positionsList) {
+      final p = pos as Map<String, dynamic>;
+      final bp = num.tryParse(p['buy_price']?.toString() ?? p['entry_price']?.toString() ?? '0') ?? 0;
+      final cp = num.tryParse(p['current_price']?.toString() ?? bp.toString()) ?? bp;
+      final qty = num.tryParse(p['qty']?.toString() ?? '1') ?? 1;
+      final pnl = (cp - bp) * qty;
+      openPnl += pnl;
+      if (pnl > 0) winnersCount++;
+    }
+
+    // Win rate calculations
+    final wins = num.tryParse(tradeStats['wins']?.toString() ?? '0')?.toInt() ?? 0;
+    final losses = num.tryParse(tradeStats['losses']?.toString() ?? '0')?.toInt() ?? 0;
+    final totalTrades = wins + losses;
+    final winRatePct = totalTrades > 0 ? (wins / totalTrades * 100) : 0.0;
+
+    return Scaffold(
+      backgroundColor: isDark ? const Color(0xff07111f) : const Color(0xfff5f7fb),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: isRunning ? const Color(0xffef4444) : const Color(0xfff97316),
+        foregroundColor: Colors.white,
+        elevation: 6,
+        onPressed: _toggleBotStatus,
+        icon: Icon(isRunning ? Icons.stop_circle_rounded : Icons.play_arrow_rounded),
+        label: Text(
+          isRunning ? 'STOP BOT' : 'RUN BOT',
+          style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
+        ),
+      ),
+      body: RefreshIndicator(
         onRefresh: refresh,
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // ── Live Engine Status Banner ──────────────────────────────────
-            Card(
-              color: isDark ? const Color(0xff10233d) : Colors.white,
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: BorderSide(
-                  color: isRunning
-                      ? const Color(0xff22c55e).withValues(alpha: 0.4)
-                      : (isDark ? const Color(0x334a74a9) : const Color(0xffe2e8f0)),
+            // ── HERO ENGINE STATUS & SESSION BANNER ────────────────────────
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: isRunning
+                      ? [const Color(0xff0f2b1d), const Color(0xff0b1729)]
+                      : [const Color(0xff1e1a2b), const Color(0xff0b1729)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: isRunning
+                      ? const Color(0xff22c55e).withValues(alpha: 0.35)
+                      : const Color(0xfff97316).withValues(alpha: 0.35),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: (isRunning ? const Color(0xff22c55e) : const Color(0xfff97316)).withValues(alpha: 0.12),
+                    blurRadius: 16,
+                    spreadRadius: 2,
+                  ),
+                ],
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: isRunning
-                            ? const Color(0x2022c55e)
-                            : (isDark ? const Color(0x2094a3b8) : const Color(0xfff1f5f9)),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        isRunning ? Icons.play_arrow_rounded : Icons.pause_rounded,
-                        color: isRunning ? const Color(0xff22c55e) : const Color(0xff94a3b8),
-                        size: 26,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
                         children: [
-                          Row(
-                            children: [
-                              Text(
-                                isRunning ? 'MAX ALPHA RUNNING' : 'ENGINE STOPPED',
-                                style: TextStyle(
-                                  color: isRunning ? const Color(0xff22c55e) : (isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b)),
-                                  fontFamily: 'monospace',
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                  letterSpacing: 0.8,
-                                ),
-                              ),
-                              if (isRunning) ...[
-                                const SizedBox(width: 8),
-                                Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xff22c55e),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ],
-                            ],
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: isRunning ? const Color(0xff22c55e) : const Color(0xff94a3b8),
+                              shape: BoxShape.circle,
+                              boxShadow: isRunning
+                                  ? [const BoxShadow(color: Color(0xff22c55e), blurRadius: 8, spreadRadius: 2)]
+                                  : null,
+                            ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(width: 8),
                           Text(
-                            isRunning
-                                ? 'Live cycles updating dynamically'
-                                : 'Tap Run MaxAlpha to start trading engine',
+                            isRunning ? 'LIVE ENGINE ACTIVE' : 'ENGINE STANDBY',
                             style: TextStyle(
-                              color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
-                              fontSize: 11,
+                              color: isRunning ? const Color(0xff22c55e) : const Color(0xff94a3b8),
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              letterSpacing: 1.1,
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.refresh_rounded),
-                      onPressed: refresh,
-                      tooltip: 'Refresh Now',
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // ── Market Regime Card ──────────────────────────────────────────
-            Card(
-              color: isDark ? const Color(0xff0b1729) : Colors.white,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'MARKET REGIME',
-                          style: TextStyle(
-                            color: Color(0xff9fb4d0),
-                            fontSize: 10,
-                            letterSpacing: 1.1,
-                            fontWeight: FontWeight.bold,
-                          ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0x203b82f6),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0x403b82f6)),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          regimeStr.toUpperCase(),
-                          style: TextStyle(
-                            color: isDark ? const Color(0xffedf5ff) : const Color(0xff10233d),
+                        child: Text(
+                          'CYCLE #${historyList.isNotEmpty ? (historyList.last['cycle'] ?? historyList.length) : 0}',
+                          style: const TextStyle(
                             fontFamily: 'monospace',
-                            fontSize: 18,
+                            color: Color(0xff3b82f6),
+                            fontSize: 11,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                      ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'PORTFOLIO VALUE',
+                    style: TextStyle(color: Color(0xff6f88aa), fontSize: 10, letterSpacing: 1.2, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        '₹${totalVal.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          color: isDark ? Colors.white : const Color(0xff10233d),
+                          fontFamily: 'monospace',
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: -.5,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: sessionPnl >= 0 ? const Color(0x2022c55e) : const Color(0x20ef4444),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '${sessionPnl >= 0 ? '+' : ''}₹${sessionPnl.abs().toStringAsFixed(2)} (${sessionPct >= 0 ? '+' : ''}${sessionPct.toStringAsFixed(2)}%)',
+                          style: TextStyle(
+                            color: sessionPnl >= 0 ? const Color(0xff22c55e) : const Color(0xffef4444),
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0x4007111f) : const Color(0xfff1f5f9),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: isDark ? const Color(0x201481b9) : const Color(0xffcbd5e1)),
                     ),
-                    _regimeBadge(regimeStr),
-                  ],
-                ),
+                    child: Text(
+                      positionsList.isNotEmpty
+                          ? 'Session started with ₹${startVal.toStringAsFixed(2)}. $winnersCount of ${positionsList.length} open stocks can be sold above buy price right now.'
+                          : 'No open stock positions. MaxAlpha scans for gap-ups and tier signals during NSE market hours.',
+                      style: TextStyle(color: isDark ? const Color(0xffedf5ff) : const Color(0xff334155), fontSize: 11.5, height: 1.4),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
 
-            // ── Metric Grid ────────────────────────────────────────────────
+            // ── MARKET REGIME & ALLOCATION CAROUSEL/BANNER ───────────────────
+            _buildRegimeBanner(regimeStr, regimeScore, t1, t2, t3, totalVal, isDark),
+            const SizedBox(height: 14),
+
+            // ── METRIC CARDS GRID ──────────────────────────────────────────
             GridView.count(
-              crossAxisCount: MediaQuery.of(context).size.width > 650 ? 4 : 2,
-              childAspectRatio: 1.5,
+              crossAxisCount: 2,
+              childAspectRatio: 1.55,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               crossAxisSpacing: 10,
               mainAxisSpacing: 10,
               children: [
-                _metric('PORTFOLIO', '₹${totalVal.toStringAsFixed(0)}', isDark),
-                _metric('CASH', '₹${cashVal.toStringAsFixed(0)}', isDark),
-                _metric('INVESTED', '₹${investedVal.toStringAsFixed(0)}', isDark),
-                _metric('POSITIONS', '$posCount / 7', isDark),
+                _buildMetricCard('CASH AVAILABLE', '₹${cashVal.toStringAsFixed(0)}', 'Deployable budget', const Color(0xff38bdf8), isDark),
+                _buildMetricCard('INVESTED', '₹${investedVal.toStringAsFixed(0)}', '${positionsList.length} active stocks', const Color(0xfffb923c), isDark),
+                _buildMetricCard('UNREALIZED P&L', '${openPnl >= 0 ? '+' : ''}₹${openPnl.abs().toStringAsFixed(2)}', openPnl >= 0 ? 'Profitable positions' : 'Open position drawdown', openPnl >= 0 ? const Color(0xff22c55e) : const Color(0xffef4444), isDark),
+                _buildMetricCard('WIN RATE', totalTrades > 0 ? '${winRatePct.toStringAsFixed(1)}%' : 'N/A', '$wins wins / $totalTrades total trades', winRatePct >= 50 ? const Color(0xff22c55e) : const Color(0xfff97316), isDark),
               ],
             ),
             const SizedBox(height: 16),
 
-            // ── Tier Allocation Section ────────────────────────────────────
-            Text(
-              'TIER ALLOCATION',
-              style: TextStyle(
-                color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
-                fontSize: 10,
-                letterSpacing: 1.2,
-                fontWeight: FontWeight.bold,
+            // ── SUB-SECTION TAB SELECTOR ──────────────────────────────────
+            Container(
+              height: 44,
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xff10233d) : const Color(0xffe2e8f0),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              padding: const EdgeInsets.all(3),
+              child: Row(
+                children: [
+                  _subTabButton(0, 'P&L Breakdown'),
+                  _subTabButton(1, 'Positions (${positionsList.length})'),
+                  _subTabButton(2, 'Cycles (${historyList.length})'),
+                  _subTabButton(3, 'Orders (${ordersList.length})'),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            _tierCard('Tier 1 — Momentum Smallcaps', 'Target: Rs 20 – Rs 250', t1, totalVal, const Color(0xfffb923c), isDark),
-            const SizedBox(height: 8),
-            _tierCard('Tier 2 — Midcaps', 'Target: Rs 250 – Rs 1,500', t2, totalVal, const Color(0xff3b82f6), isDark),
-            const SizedBox(height: 8),
-            _tierCard('Tier 3 — Blue Chip / ETF', 'Target: Core allocation', t3, totalVal, const Color(0xff22c55e), isDark),
+            const SizedBox(height: 12),
+
+            // ── SUB-SECTION CONTENT ───────────────────────────────────────
+            if (_activeSubTab == 0) _buildScrollablePnlBreakdown(historyList, startVal, isDark),
+            if (_activeSubTab == 1) _buildPositionsSection(positionsList, isDark),
+            if (_activeSubTab == 2) _buildCyclesSection(historyList, isDark),
+            if (_activeSubTab == 3) _buildOrdersSection(ordersList, isDark),
+
             const SizedBox(height: 16),
 
-            // ── Active Positions Section ───────────────────────────────────
-            if (positionsList.isNotEmpty) ...[
-              Text(
-                'OPEN POSITIONS (${positionsList.length})',
-                style: TextStyle(
-                  color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
-                  fontSize: 10,
-                  letterSpacing: 1.2,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                color: isDark ? const Color(0xff10233d) : Colors.white,
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: positionsList.length,
-                  separatorBuilder: (context, index) => Divider(height: 1, color: isDark ? const Color(0x284a74a9) : const Color(0xffe5e7eb)),
-                  itemBuilder: (ctx, idx) {
-                    final item = positionsList[idx] as Map<String, dynamic>;
-                    // mobile_gateway.py returns 'ticker' and 'buy_price'
-                    final sym = item['ticker']?.toString() ?? item['symbol']?.toString() ?? 'STOCK';
-                    final qty = item['qty'] ?? item['shares'] ?? 0;
-                    final buyPx = num.tryParse(item['buy_price']?.toString() ?? item['entry_price']?.toString() ?? item['price']?.toString() ?? '0') ?? 0;
-                    final curPx = num.tryParse(item['current_price']?.toString() ?? buyPx.toString()) ?? buyPx;
-                    final pnlPct = num.tryParse(item['pnl_pct']?.toString() ?? '0') ?? 0;
-                    final pnl = ((curPx - buyPx) * (num.tryParse(qty.toString()) ?? 1));
-                    final isPos = pnl >= 0;
-
-                    return ListTile(
-                      dense: true,
-                      title: Text(sym, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 14)),
-                      subtitle: Text('Qty: $qty • Buy: ₹${buyPx.toStringAsFixed(1)}', style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 11)),
-                      trailing: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            '₹${curPx.toStringAsFixed(1)}',
-                            style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 13),
-                          ),
-                          Text(
-                            '${isPos ? '+' : ''}₹${pnl.toStringAsFixed(1)}',
-                            style: TextStyle(color: isPos ? const Color(0xff22c55e) : const Color(0xffef4444), fontWeight: FontWeight.bold, fontSize: 11),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-
-            // ── Cycle History Log Section ──────────────────────────────────
-            Text(
-              'LIVE CYCLE HISTORY (${historyList.length})',
-              style: TextStyle(
-                color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
-                fontSize: 10,
-                letterSpacing: 1.2,
-                fontWeight: FontWeight.bold,
-              ),
+            // ── TIER ALLOCATION CARDS ───────────────────────────────────────
+            const Text(
+              'TIER STRATEGY ALLOCATION',
+              style: TextStyle(color: Color(0xff6f88aa), fontSize: 10, letterSpacing: 1.2, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            Card(
-              color: isDark ? const Color(0xff10233d) : Colors.white,
-              child: historyList.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Center(
-                        child: Text(
-                          'No cycles completed yet.\nEngine will record data after every trading cycle.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 12),
-                        ),
-                      ),
-                    )
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: historyList.length > 15 ? 15 : historyList.length,
-                      separatorBuilder: (context, index) => Divider(height: 1, color: isDark ? const Color(0x284a74a9) : const Color(0xffe5e7eb)),
-                      itemBuilder: (ctx, idx) {
-                        // Reverse so latest is on top
-                        final item = (historyList.reversed.toList())[idx] as Map<String, dynamic>;
-                        final cycle = item['cycle'] ?? historyList.length - idx;
-                        final tot = num.tryParse(item['total_usd']?.toString() ?? item['total']?.toString() ?? '0') ?? 0;
-                        final reg = item['regime']?.toString() ?? 'NORMAL';
-                        final sigs = item['signals'] ?? 0;
-                        final ts = item['ts']?.toString() ?? '';
-                        var timeDisplay = '';
-                        if (ts.isNotEmpty) {
-                          try {
-                            final dt = DateTime.parse(ts).toLocal();
-                            timeDisplay = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-                          } catch (_) {}
-                        }
+            _tierDetailCard('Tier 1 — Momentum Smallcaps', 'Target: Rs 20 – Rs 250 • 60% Bull Alloc', t1, totalVal, const Color(0xfffb923c), isDark),
+            const SizedBox(height: 8),
+            _tierDetailCard('Tier 2 — Midcap Growth', 'Target: Rs 250 – Rs 1,500 • 30% Bull Alloc', t2, totalVal, const Color(0xff3b82f6), isDark),
+            const SizedBox(height: 8),
+            _tierDetailCard('Tier 3 — Bluechip / ETF', 'Target: Core Safety • 10% Bull Alloc', t3, totalVal, const Color(0xff22c55e), isDark),
 
-                        return ListTile(
-                          dense: true,
-                          leading: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: const Color(0xfff97316).withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              'C#$cycle',
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                color: Color(0xfff97316),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                          title: Text(
-                            'Portfolio: ₹${tot.toStringAsFixed(0)}',
-                            style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 13),
-                          ),
-                          subtitle: Text(
-                            'Regime: $reg ${timeDisplay.isNotEmpty ? '• $timeDisplay' : ''}',
-                            style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 11),
-                          ),
-                          trailing: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: sigs > 0 ? const Color(0x2022c55e) : (isDark ? const Color(0x2094a3b8) : const Color(0xfff1f5f9)),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              '$sigs Signals',
-                              style: TextStyle(
-                                color: sigs > 0 ? const Color(0xff22c55e) : (isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b)),
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
           ],
         ),
       ),
     );
   }
 
-  Widget _metric(String title, String value, bool isDark) => Card(
-        color: isDark ? const Color(0xff0b1729) : Colors.white,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+  Widget _subTabButton(int index, String label) {
+    final selected = _activeSubTab == index;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _activeSubTab = index),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected
+                ? (isDark ? const Color(0xff07111f) : Colors.white)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(11),
+            boxShadow: selected
+                ? [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 4)]
+                : null,
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected
+                  ? const Color(0xfff97316)
+                  : (isDark ? const Color(0xff6f88aa) : const Color(0xff64748b)),
+              fontSize: 11,
+              fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── 1. SCROLLABLE P&L BREAKDOWN TABLE (User requested max height scrollable container!) ──
+  Widget _buildScrollablePnlBreakdown(List historyList, num sessionStartValue, bool isDark) {
+    if (historyList.isEmpty) {
+      return Container(
+        height: 140,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xff10233d) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Text('No cycle data yet. Start bot to generate live P&L history.', style: TextStyle(color: Color(0xff6f88aa), fontSize: 12)),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xff10233d) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: isDark ? const Color(0x284a74a9) : const Color(0xffe2e8f0)),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                title,
-                style: TextStyle(
-                  color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
-                  fontSize: 10,
-                  letterSpacing: 1,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                value,
-                style: TextStyle(
-                  color: isDark ? const Color(0xffedf5ff) : const Color(0xff10233d),
-                  fontFamily: 'monospace',
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                ),
+              const Text('P&L BREAKDOWN (PER CYCLE)', style: TextStyle(color: Color(0xff6f88aa), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(color: const Color(0x20f97316), borderRadius: BorderRadius.circular(6)),
+                child: Text('${historyList.length} CYCLES', style: const TextStyle(color: Color(0xfff97316), fontSize: 10, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
               ),
             ],
           ),
-        ),
-      );
+          const SizedBox(height: 10),
+          // FIXED HEIGHT SCROLLABLE CONTAINER (As explicitly requested by user!)
+          SizedBox(
+            height: 300,
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: ListView.separated(
+                itemCount: historyList.length,
+                separatorBuilder: (ctx, idx) => Divider(height: 1, color: isDark ? const Color(0x204a74a9) : const Color(0xfff1f5f9)),
+                itemBuilder: (ctx, idx) {
+                  // Latest cycle at top
+                  final item = (historyList.reversed.toList())[idx] as Map<String, dynamic>;
+                  final cycleNum = item['cycle'] ?? (historyList.length - idx);
+                  final totalUsd = num.tryParse(item['total_usd']?.toString() ?? '0') ?? 0;
+                  
+                  // Compute cycle P&L vs previous cycle
+                  num prevVal = sessionStartValue;
+                  final origIdx = historyList.length - 1 - idx;
+                  if (origIdx > 0) {
+                    final prevItem = historyList[origIdx - 1] as Map<String, dynamic>;
+                    prevVal = num.tryParse(prevItem['total_usd']?.toString() ?? '0') ?? sessionStartValue;
+                  }
+                  final pnl = totalUsd - prevVal;
+                  final pct = prevVal > 0 ? (pnl / prevVal * 100) : 0.0;
+                  final isPos = pnl >= 0;
 
-  Widget _tierCard(String title, String subtitle, num val, num total, Color color, bool isDark) {
-    final pct = total > 0 ? (val / total).clamp(0.0, 1.0) : 0.0;
-    return Card(
-      color: isDark ? const Color(0xff10233d) : Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(title, style: TextStyle(color: isDark ? const Color(0xffedf5ff) : const Color(0xff10233d), fontWeight: FontWeight.w600, fontSize: 13)),
-                Text('₹${val.toStringAsFixed(0)}', style: TextStyle(color: color, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 13)),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(subtitle, style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 11)),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: pct.toDouble(),
-                backgroundColor: isDark ? const Color(0xff0b1729) : const Color(0xffe2e8f0),
-                color: color,
-                minHeight: 6,
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 70,
+                          child: Text(
+                            'Cycle $cycleNum',
+                            style: TextStyle(
+                              color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            '${isPos ? '+' : ''}₹${pnl.abs().toStringAsFixed(2)}',
+                            style: TextStyle(
+                              color: isPos ? const Color(0xff22c55e) : const Color(0xffef4444),
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            '₹${totalUsd.toStringAsFixed(0)}',
+                            style: TextStyle(
+                              color: isDark ? const Color(0xffedf5ff) : const Color(0xff10233d),
+                              fontFamily: 'monospace',
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 60,
+                          child: Container(
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: isDark ? const Color(0xff0b1729) : const Color(0xffe2e8f0),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            alignment: Alignment.centerLeft,
+                            child: FractionallySizedBox(
+                              widthFactor: (pct.abs() / 2.0).clamp(0.05, 1.0),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: isPos ? const Color(0xff22c55e) : const Color(0xffef4444),
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 55,
+                          child: Text(
+                            '${isPos ? '+' : ''}${pct.toStringAsFixed(2)}%',
+                            textAlign: TextAlign.end,
+                            style: TextStyle(
+                              color: isPos ? const Color(0xff22c55e) : const Color(0xffef4444),
+                              fontSize: 10.5,
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 2. POSITIONS SECTION ──
+  Widget _buildPositionsSection(List positionsList, bool isDark) {
+    if (positionsList.isEmpty) {
+      return Container(
+        height: 140,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xff10233d) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Text('No active positions right now.', style: TextStyle(color: Color(0xff6f88aa), fontSize: 12)),
+      );
+    }
+
+    return Column(
+      children: positionsList.map((pos) {
+        final p = pos as Map<String, dynamic>;
+        final sym = p['ticker']?.toString() ?? p['symbol']?.toString() ?? 'STOCK';
+        final qty = p['qty'] ?? p['shares'] ?? 0;
+        final buyPx = num.tryParse(p['buy_price']?.toString() ?? p['entry_price']?.toString() ?? '0') ?? 0;
+        final curPx = num.tryParse(p['current_price']?.toString() ?? buyPx.toString()) ?? buyPx;
+        final pnlPct = num.tryParse(p['pnl_pct']?.toString() ?? '0') ?? 0;
+        final profitRs = (curPx - buyPx) * (num.tryParse(qty.toString()) ?? 1);
+        final canSell = profitRs > 0;
+        final winProb = num.tryParse(p['win_probability']?.toString() ?? '0') ?? 0;
+        final tier = p['tier'] ?? 1;
+
+        return Card(
+          margin: const EdgeInsets.only(bottom: 10),
+          color: isDark ? const Color(0xff10233d) : Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: canSell ? const Color(0x4022c55e) : (isDark ? const Color(0x284a74a9) : const Color(0xffe2e8f0))),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: tier == 1 ? const Color(0x20fb923c) : tier == 2 ? const Color(0x203b82f6) : const Color(0x2022c55e),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text('T$tier $sym', style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 13)),
+                        ),
+                        const SizedBox(width: 8),
+                        Text('Qty: $qty', style: const TextStyle(color: Color(0xff6f88aa), fontSize: 11)),
+                      ],
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: canSell ? const Color(0x2022c55e) : const Color(0x20ef4444),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        canSell ? 'PROFITABLE (SELL OK)' : 'HOLDING (RECOVERY)',
+                        style: TextStyle(color: canSell ? const Color(0xff22c55e) : const Color(0xffef4444), fontSize: 9.5, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('BUY PRICE', style: TextStyle(color: Color(0xff6f88aa), fontSize: 9.5)),
+                        Text('₹${buyPx.toStringAsFixed(2)}', style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 12)),
+                      ],
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('CURRENT PRICE', style: TextStyle(color: Color(0xff6f88aa), fontSize: 9.5)),
+                        Text('₹${curPx.toStringAsFixed(2)}', style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 12)),
+                      ],
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text('UNREALIZED P&L', style: TextStyle(color: Color(0xff6f88aa), fontSize: 9.5)),
+                        Text(
+                          '${profitRs >= 0 ? '+' : ''}₹${profitRs.abs().toStringAsFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toStringAsFixed(2)}%)',
+                          style: TextStyle(color: profitRs >= 0 ? const Color(0xff22c55e) : const Color(0xffef4444), fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                if (winProb > 0) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Est. Win Chance: ${winProb.toStringAsFixed(1)}%', style: const TextStyle(color: Color(0xff6f88aa), fontSize: 10.5)),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: SizedBox(
+                          width: 100,
+                          child: LinearProgressIndicator(
+                            value: (winProb / 100).clamp(0.0, 1.0),
+                            color: winProb >= 50 ? const Color(0xff22c55e) : const Color(0xfff97316),
+                            backgroundColor: isDark ? const Color(0xff0b1729) : const Color(0xffe2e8f0),
+                            minHeight: 4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  // ── 3. CYCLES SECTION ──
+  Widget _buildCyclesSection(List historyList, bool isDark) {
+    if (historyList.isEmpty) {
+      return Container(
+        height: 140,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xff10233d) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Text('No cycle logs available yet.', style: TextStyle(color: Color(0xff6f88aa), fontSize: 12)),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xff10233d) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: isDark ? const Color(0x284a74a9) : const Color(0xffe2e8f0)),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: SizedBox(
+        height: 300,
+        child: ListView.separated(
+          itemCount: historyList.length,
+          separatorBuilder: (ctx, idx) => Divider(height: 1, color: isDark ? const Color(0x204a74a9) : const Color(0xfff1f5f9)),
+          itemBuilder: (ctx, idx) {
+            final item = (historyList.reversed.toList())[idx] as Map<String, dynamic>;
+            final cycle = item['cycle'] ?? (historyList.length - idx);
+            final tot = num.tryParse(item['total_usd']?.toString() ?? '0') ?? 0;
+            final reg = item['regime']?.toString() ?? 'NEUTRAL';
+            final sigs = item['signals'] ?? 0;
+            final ts = item['ts']?.toString() ?? '';
+            String timeStr = '--';
+            if (ts.isNotEmpty) {
+              try {
+                final dt = DateTime.parse(ts).toLocal();
+                timeStr = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+              } catch (_) {}
+            }
+
+            return ListTile(
+              dense: true,
+              leading: Text('C#$cycle', style: const TextStyle(fontFamily: 'monospace', color: Color(0xfff97316), fontWeight: FontWeight.bold, fontSize: 11)),
+              title: Text('Portfolio: ₹${tot.toStringAsFixed(0)}', style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 12)),
+              subtitle: Text('Regime: $reg • Time: $timeStr', style: const TextStyle(color: Color(0xff6f88aa), fontSize: 10)),
+              trailing: Text('$sigs Signals', style: TextStyle(color: sigs > 0 ? const Color(0xff22c55e) : const Color(0xff6f88aa), fontSize: 10, fontWeight: FontWeight.bold)),
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _regimeBadge(String regime) {
-    final u = regime.toUpperCase();
+  // ── 4. ORDERS SECTION ──
+  Widget _buildOrdersSection(List ordersList, bool isDark) {
+    if (ordersList.isEmpty) {
+      return Container(
+        height: 140,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xff10233d) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Text('No orders or closed trades yet.', style: TextStyle(color: Color(0xff6f88aa), fontSize: 12)),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xff10233d) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: isDark ? const Color(0x284a74a9) : const Color(0xffe2e8f0)),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: SizedBox(
+        height: 300,
+        child: ListView.separated(
+          itemCount: ordersList.length,
+          separatorBuilder: (ctx, idx) => Divider(height: 1, color: isDark ? const Color(0x204a74a9) : const Color(0xfff1f5f9)),
+          itemBuilder: (ctx, idx) {
+            final order = (ordersList.reversed.toList())[idx] as Map<String, dynamic>;
+            final side = (order['event']?.toString() ?? (order['sell_price'] != null ? 'SELL' : 'BUY')).toUpperCase();
+            final tkr = order['ticker']?.toString() ?? '--';
+            final qty = order['qty'] ?? 0;
+            final px = num.tryParse(order['price']?.toString() ?? order['buy_price']?.toString() ?? '0') ?? 0;
+            final pnl = num.tryParse(order['pnl']?.toString() ?? '0') ?? 0;
+
+            return ListTile(
+              dense: true,
+              leading: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: side == 'BUY' ? const Color(0x203b82f6) : const Color(0x2022c55e),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(side, style: TextStyle(color: side == 'BUY' ? const Color(0xff3b82f6) : const Color(0xff22c55e), fontSize: 10, fontWeight: FontWeight.bold)),
+              ),
+              title: Text('$tkr (Qty: $qty @ ₹${px.toStringAsFixed(1)})', style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 12)),
+              subtitle: Text(order['reason']?.toString() ?? order['strategy']?.toString() ?? 'Cycle signal executed', style: const TextStyle(color: Color(0xff6f88aa), fontSize: 10)),
+              trailing: side == 'SELL'
+                  ? Text('${pnl >= 0 ? '+' : ''}₹${pnl.abs().toStringAsFixed(2)}', style: TextStyle(color: pnl >= 0 ? const Color(0xff22c55e) : const Color(0xffef4444), fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 11))
+                  : null,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // ── HELPER WIDGETS ──
+  Widget _buildRegimeBanner(String regime, num score, num t1, num t2, num t3, num total, bool isDark) {
     Color bg, fg;
+    final u = regime.toUpperCase();
     if (u.contains('BULL')) {
       bg = const Color(0x2022c55e);
       fg = const Color(0xff22c55e);
     } else if (u.contains('BEAR')) {
       bg = const Color(0x20ef4444);
       fg = const Color(0xffef4444);
-    } else if (u.contains('CRASH')) {
-      bg = const Color(0x30ef4444);
-      fg = const Color(0xffef4444);
     } else {
       bg = const Color(0x203b82f6);
       fg = const Color(0xff3b82f6);
     }
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(8),
+        color: isDark ? const Color(0xff0b1729) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: fg.withValues(alpha: 0.3)),
       ),
-      child: Text(
-        u,
-        style: TextStyle(color: fg, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 11),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
+                    child: Text(u, style: TextStyle(color: fg, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 12)),
+                  ),
+                  const SizedBox(width: 10),
+                  Text('${(score * 100).toStringAsFixed(0)}% Score', style: const TextStyle(color: Color(0xff6f88aa), fontSize: 11, fontWeight: FontWeight.w600)),
+                ],
+              ),
+              const Text('NIFTY Uptrend • RSI 64', style: TextStyle(color: Color(0xff6f88aa), fontSize: 10.5)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _tierProgress('T1 Smallcap', t1, total, const Color(0xfffb923c), 0.60)),
+              const SizedBox(width: 8),
+              Expanded(child: _tierProgress('T2 Midcap', t2, total, const Color(0xff3b82f6), 0.30)),
+              const SizedBox(width: 8),
+              Expanded(child: _tierProgress('T3 Bluechip', t3, total, const Color(0xff22c55e), 0.10)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tierProgress(String label, num val, num total, Color color, double targetPct) {
+    final pct = total > 0 ? (val / total).clamp(0.0, 1.0) : 0.0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: const TextStyle(color: Color(0xff6f88aa), fontSize: 9.5)),
+            Text('${(targetPct * 100).toStringAsFixed(0)}%', style: TextStyle(color: color, fontSize: 9.5, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: LinearProgressIndicator(
+            value: pct.toDouble(),
+            color: color,
+            backgroundColor: const Color(0x20ffffff),
+            minHeight: 5,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetricCard(String label, String value, String sub, Color accent, bool isDark) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xff10233d) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: isDark ? const Color(0x284a74a9) : const Color(0xffe2e8f0)),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(label, style: const TextStyle(color: Color(0xff6f88aa), fontSize: 9.5, fontWeight: FontWeight.bold, letterSpacing: 1)),
+          const SizedBox(height: 4),
+          Text(value, style: TextStyle(color: accent, fontFamily: 'monospace', fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 2),
+          Text(sub, style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 9.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+        ],
+      ),
+    );
+  }
+
+  Widget _tierDetailCard(String title, String target, num val, num total, Color color, bool isDark) {
+    final pct = total > 0 ? (val / total * 100) : 0.0;
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xff10233d) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: isDark ? const Color(0x284a74a9) : const Color(0xffe2e8f0)),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(title, style: TextStyle(color: isDark ? Colors.white : const Color(0xff10233d), fontWeight: FontWeight.w600, fontSize: 12)),
+              Text('₹${val.toStringAsFixed(0)} (${pct.toStringAsFixed(1)}%)', style: TextStyle(color: color, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 12)),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(target, style: const TextStyle(color: Color(0xff6f88aa), fontSize: 10)),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: (pct / 100).clamp(0.0, 1.0),
+              color: color,
+              backgroundColor: isDark ? const Color(0xff0b1729) : const Color(0xffe2e8f0),
+              minHeight: 5,
+            ),
+          ),
+        ],
       ),
     );
   }
