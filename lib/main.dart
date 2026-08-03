@@ -944,11 +944,13 @@ class _DashboardPageState extends State<DashboardPage> {
                   separatorBuilder: (context, index) => Divider(height: 1, color: isDark ? const Color(0x284a74a9) : const Color(0xffe5e7eb)),
                   itemBuilder: (ctx, idx) {
                     final item = positionsList[idx] as Map<String, dynamic>;
-                    final sym = item['symbol']?.toString() ?? 'STOCK';
+                    // mobile_gateway.py returns 'ticker' and 'buy_price'
+                    final sym = item['ticker']?.toString() ?? item['symbol']?.toString() ?? 'STOCK';
                     final qty = item['qty'] ?? item['shares'] ?? 0;
-                    final buyPx = num.tryParse(item['entry_price']?.toString() ?? item['price']?.toString() ?? '0') ?? 0;
+                    final buyPx = num.tryParse(item['buy_price']?.toString() ?? item['entry_price']?.toString() ?? item['price']?.toString() ?? '0') ?? 0;
                     final curPx = num.tryParse(item['current_price']?.toString() ?? buyPx.toString()) ?? buyPx;
-                    final pnl = num.tryParse(item['pnl']?.toString() ?? '0') ?? (curPx - buyPx) * (num.tryParse(qty.toString()) ?? 1);
+                    final pnlPct = num.tryParse(item['pnl_pct']?.toString() ?? '0') ?? 0;
+                    final pnl = ((curPx - buyPx) * (num.tryParse(qty.toString()) ?? 1));
                     final isPos = pnl >= 0;
 
                     return ListTile(
@@ -1218,20 +1220,26 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
 
   Future<void> _openDashboard() async {
     try {
-      final snapshot = await widget.session.api.dashboard();
-      final history = jsonEncode(snapshot['history'] ?? const []);
+      // When served via the local HTTP server the HTML fetches performance_v4.json
+      // itself — we only need to dismiss the login screen and boot the dashboard.
+      // When loaded from a Flutter asset we also inject history so the file://
+      // origin can display data without network access.
+      final isHttpMode = _loadedDashboardUrl != null;
+      final history = isHttpMode
+          ? 'null'
+          : jsonEncode((await widget.session.api.dashboard())['history'] ?? const []);
       await _controller.runJavaScript('''
         (function() {
           const dashboardHeader = document.querySelector('.hdr');
           if (dashboardHeader) dashboardHeader.style.display = 'none';
-          // Flutter owns authentication. The bundled desktop dashboard has a
-          // separate HTML password screen, which otherwise prevents boot() and
-          // leaves the mobile view showing no data.
+          // Flutter owns authentication — bypass the HTML login screen.
           const loginScreen = document.getElementById('ls');
           const app = document.getElementById('app');
           if (loginScreen) loginScreen.style.display = 'none';
           if (app) app.style.display = 'block';
-          window.__maxAlphaHistory = $history;
+          // Only inject history when NOT using HTTP server (HTTP mode reads
+          // performance_v4.json directly, giving always-fresh data).
+          if ($history !== null) window.__maxAlphaHistory = $history;
           if (!window.__maxAlphaFlutterBooted) {
             window.__maxAlphaFlutterBooted = true;
             if (typeof boot === 'function') boot();
@@ -1256,8 +1264,22 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
 
   Future<void> _syncHistory() async {
     try {
-      final snapshot = await widget.session.api.dashboard();
-      await _controller.runJavaScript('window.__maxAlphaHistory = ${jsonEncode(snapshot['history'] ?? const [])}; if (document.getElementById("app").style.display === "block") { loadAll(); updateAgentStatus(); }');
+      // HTTP server mode: the dashboard fetches /performance_v4.json directly,
+      // so a JS reload is sufficient — no need to inject data from Dart.
+      // Asset (file://) mode: inject fresh history so the WebView can display it.
+      final isHttpMode = _loadedDashboardUrl != null;
+      if (isHttpMode) {
+        // Tell the page to re-read the JSON from the server
+        await _controller.runJavaScript(
+          'if (document.getElementById("app") && document.getElementById("app").style.display === "block") { loadAll(); if(typeof updateAgentStatus==="function") updateAgentStatus(); }'
+        );
+      } else {
+        final snapshot = await widget.session.api.dashboard();
+        await _controller.runJavaScript(
+          'window.__maxAlphaHistory = ${jsonEncode(snapshot["history"] ?? const [])}; '
+          'if (document.getElementById("app") && document.getElementById("app").style.display === "block") { loadAll(); if(typeof updateAgentStatus==="function") updateAgentStatus(); }'
+        );
+      }
     } catch (_) {}
   }
 
