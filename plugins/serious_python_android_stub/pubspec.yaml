@@ -1,0 +1,19 @@
+name: serious_python_android
+description: Android stub implementation for serious_python (Android uses Chaquopy in this app).
+version: 4.5.1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.7.0'
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.flet.serious_python_android
+        pluginClass: SeriousPythonAndroidPlugin
+
+dependencies:
+  flutter:
+    sdk: flutter
+  serious_python_platform_interface: ^4.5.1

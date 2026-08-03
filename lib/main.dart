@@ -271,7 +271,7 @@ class _MaxAlphaAppState extends State<MaxAlphaApp> {
     final dark = _theme(Brightness.dark);
     return AnimatedBuilder(
       animation: session,
-      builder: (_, __) => MaterialApp(
+      builder: (context, child) => MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'Max Alpha',
         theme: light,
@@ -488,16 +488,19 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _checkSetup() async {
-    if (mounted) setState(() {
-      setupNeeded = !widget.session.configured;
-      setupChecked = true;
-    });
+    if (mounted) {
+      setState(() {
+        setupNeeded = !widget.session.configured;
+        setupChecked = true;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!setupChecked)
+    if (!setupChecked) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final title = setupNeeded ? 'Bot setup' : ['Dashboard', 'Run MaxAlpha', 'HTML Dashboard', 'Settings'][page];
     return Scaffold(
       appBar: AppBar(
@@ -769,7 +772,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 borderRadius: BorderRadius.circular(16),
                 side: BorderSide(
                   color: isRunning
-                      ? const Color(0xff22c55e).withOpacity(0.4)
+                      ? const Color(0xff22c55e).withValues(alpha: 0.4)
                       : (isDark ? const Color(0x334a74a9) : const Color(0xffe2e8f0)),
                 ),
               ),
@@ -938,7 +941,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: positionsList.length,
-                  separatorBuilder: (_, __) => Divider(height: 1, color: isDark ? const Color(0x284a74a9) : const Color(0xffe5e7eb)),
+                  separatorBuilder: (context, index) => Divider(height: 1, color: isDark ? const Color(0x284a74a9) : const Color(0xffe5e7eb)),
                   itemBuilder: (ctx, idx) {
                     final item = positionsList[idx] as Map<String, dynamic>;
                     final sym = item['symbol']?.toString() ?? 'STOCK';
@@ -1001,7 +1004,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       itemCount: historyList.length > 15 ? 15 : historyList.length,
-                      separatorBuilder: (_, __) => Divider(height: 1, color: isDark ? const Color(0x284a74a9) : const Color(0xffe5e7eb)),
+                      separatorBuilder: (context, index) => Divider(height: 1, color: isDark ? const Color(0x284a74a9) : const Color(0xffe5e7eb)),
                       itemBuilder: (ctx, idx) {
                         // Reverse so latest is on top
                         final item = (historyList.reversed.toList())[idx] as Map<String, dynamic>;
@@ -1023,7 +1026,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           leading: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: const Color(0xfff97316).withOpacity(0.15),
+                              color: const Color(0xfff97316).withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
@@ -1157,7 +1160,7 @@ class _DashboardPageState extends State<DashboardPage> {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: fg.withOpacity(0.3)),
+        border: Border.all(color: fg.withValues(alpha: 0.3)),
       ),
       child: Text(
         u,
@@ -1238,6 +1241,7 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
           }
         })();
       ''');
+      if (!mounted) return;
       await _applyDashboardTheme(Theme.of(context).brightness == Brightness.dark);
     } catch (_) {}
   }
@@ -1301,11 +1305,12 @@ class _RunPageState extends State<RunPage> {
   Future<void> refresh() async {
     try {
       final d = await widget.session.api.logs();
-      if (mounted)
+      if (mounted) {
         setState(() {
           lines = List<String>.from(d['lines'] ?? []);
           running = d['running'] == true;
         });
+      }
     } catch (_) {}
   }
 
@@ -1493,10 +1498,11 @@ class SettingsPage extends StatelessWidget {
         ),
       );
     } on ApiError catch (error) {
-      if (context.mounted)
+      if (context.mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
     }
   }
 
