@@ -45,13 +45,14 @@ android {
 
 val stagedPythonDir = layout.buildDirectory.dir("generated/mobile-python")
 val stageMobilePython by tasks.registering(Copy::class) {
-    from(file("../agent")) {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(file("../../agent")) {
         exclude("__pycache__/**", "**/*.pyc", "mobile_api.py",
                 "main_ios.py", "mobile_gateway_http.py", "requirements_ios.txt")
         into("agent")
     }
-    from(file("../agent/symbol_map.json")) { into("agent") }
-    from(file("../assets/dashboard_v5_bot2.html")) { into("agent") }
+    // dashboard HTML lives in assets/, not in agent/ — copy it alongside the Python modules.
+    from(file("../../assets/dashboard_v5_bot2.html")) { into("agent") }
     into(stagedPythonDir)
 }
 
