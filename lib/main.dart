@@ -1,26 +1,129 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
+import 'package:serious_python/serious_python.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-void main() => runApp(const MaxAlphaApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Start the embedded Python bot engine on iOS.
+  // On Android this is a no-op — Chaquopy handles everything via MethodChannel.
+  if (Platform.isIOS) {
+    SeriousPython.run(
+      appFileName: 'main_ios.py',
+      // Pass the app module path so Python imports resolve correctly.
+      // serious_python stages the agent/ dir at <resources>/app/.
+    );
+  }
+  runApp(const MaxAlphaApp());
+}
 
 class ApiError implements Exception {
   ApiError(this.message);
   final String message;
 }
 
+// ── iOS HTTP bridge ──────────────────────────────────────────────────────────
+// serious_python starts the Flask server (main_ios.py) in a background thread.
+// Flutter talks to it via HTTP on 127.0.0.1:8766.
+// Android keeps the existing MethodChannel / Chaquopy path.
+
+const _iOSBotBaseUrl = 'http://127.0.0.1:8766';
+
+Future<Map<String, dynamic>> _iosGet(String path) async {
+  final uri = Uri.parse('$_iOSBotBaseUrl$path');
+  late http.Response resp;
+  // The Python server may need a moment to start on first call — retry briefly.
+  for (var attempt = 0; attempt < 8; attempt++) {
+    try {
+      resp = await http.get(uri).timeout(const Duration(seconds: 10));
+      break;
+    } catch (_) {
+      if (attempt == 7) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+  }
+  final body = jsonDecode(resp.body) as Map<String, dynamic>;
+  if (body['ok'] != true) throw ApiError(body['error']?.toString() ?? 'iOS bot error on $path');
+  final result = body['result'];
+  if (result == null) return const {};
+  if (result is Map<String, dynamic>) return result;
+  return {'result': result};
+}
+
+Future<Map<String, dynamic>> _iosPost(String path, [Object? body]) async {
+  final uri = Uri.parse('$_iOSBotBaseUrl$path');
+  late http.Response resp;
+  for (var attempt = 0; attempt < 8; attempt++) {
+    try {
+      resp = await http
+          .post(uri,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(body ?? {}))
+          .timeout(const Duration(seconds: 30));
+      break;
+    } catch (_) {
+      if (attempt == 7) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+  }
+  final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+  if (decoded['ok'] != true) throw ApiError(decoded['error']?.toString() ?? 'iOS bot error on $path');
+  final result = decoded['result'];
+  if (result == null) return const {};
+  if (result is Map<String, dynamic>) return result;
+  return {'result': result};
+}
+
+// ── MobileApi ────────────────────────────────────────────────────────────────
+
 class MobileApi {
   MobileApi(this.session);
   final Session session;
+
+  // Android: direct Chaquopy MethodChannel bridge.
   static const _bridge = MethodChannel('com.maxalpha.mobile/bot');
 
+  /// Call via MethodChannel (Android) or HTTP (iOS).
   Future<T?> _call<T>(String method, [dynamic arguments]) async {
+    if (Platform.isIOS) {
+      // Route to the Flask HTTP bridge.
+      final Map<String, dynamic> result;
+      switch (method) {
+        case 'configure':
+          result = await _iosPost('/configure', arguments);
+          break;
+        case 'dashboard':
+          result = await _iosGet('/dashboard');
+          return result as T?;
+        case 'logs':
+          result = await _iosGet('/logs');
+          return result as T?;
+        case 'signals':
+          result = await _iosGet('/signals');
+          return result as T?;
+        case 'startDashboard':
+          result = await _iosPost('/startDashboard');
+          return result as T?;
+        case 'startBot':
+          await _iosPost('/startBot', arguments);
+          return null;
+        case 'stopBot':
+          await _iosPost('/stopBot');
+          return null;
+        default:
+          throw ApiError('Unknown bot method: $method');
+      }
+      return result as T?;
+    }
+    // Android path — unchanged.
     try {
       return await _bridge.invokeMethod<T>(method, arguments);
     } on PlatformException catch (error) {
@@ -373,8 +476,9 @@ class _AppShellState extends State<AppShell> {
     // Keep every section mounted. In particular, this preserves the WebView
     // dashboard and its Flutter-provided data across drawer navigation.
     _pages = [
-      ExactDashboardPage(session: widget.session),
+      DashboardPage(session: widget.session),
       RunPage(session: widget.session),
+      ExactDashboardPage(session: widget.session),
       SettingsPage(
         session: widget.session,
         onLogout: () => widget.session.signOut(),
@@ -394,7 +498,7 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     if (!setupChecked)
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    final title = setupNeeded ? 'Bot setup' : ['Dashboard', 'Run MaxAlpha', 'Settings'][page];
+    final title = setupNeeded ? 'Bot setup' : ['Dashboard', 'Run MaxAlpha', 'HTML Dashboard', 'Settings'][page];
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 68,
@@ -431,8 +535,9 @@ class _AppShellState extends State<AppShell> {
             const SizedBox(height: 6),
             _nav(0, Icons.grid_view_rounded, 'Dashboard'),
             _nav(1, Icons.play_circle_fill_rounded, 'Run MaxAlpha'),
+            _nav(2, Icons.web_rounded, 'HTML Web View'),
             const Divider(indent: 20, endIndent: 20),
-            _nav(2, Icons.tune_rounded, 'Settings'),
+            _nav(3, Icons.tune_rounded, 'Settings'),
           ],
         ),
       ),
@@ -601,133 +706,465 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   Map<String, dynamic> data = {};
   bool loading = true;
+  Timer? _autoRefreshTimer;
+
   @override
   void initState() {
     super.initState();
     refresh();
+    // Auto refresh every 5 seconds so live bot cycles show up dynamically
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> refresh() async {
     try {
-      data = await widget.session.api.dashboard();
+      final res = await widget.session.api.dashboard();
       final logs = await widget.session.api.logs();
-      data['running'] = logs['running'] == true;
-    } catch (_) {}
-    if (mounted) setState(() => loading = false);
+      res['running'] = logs['running'] == true;
+      if (mounted) {
+        setState(() {
+          data = res;
+          loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => loading = false);
+    }
   }
 
   @override
-  Widget build(BuildContext context) => Container(
-    color: const Color(0xff07111f),
-    child: RefreshIndicator(
-    onRefresh: refresh,
-    child: ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Row(
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final historyList = (data['history'] as List?) ?? [];
+    final positionsList = (data['positions_detail'] as List?) ?? [];
+    final isRunning = data['running'] == true;
+    final regimeStr = (data['regime'] as String?) ?? 'Awaiting first cycle';
+    final totalVal = num.tryParse(data['total']?.toString() ?? '0') ?? 0;
+    final cashVal = num.tryParse(data['cash']?.toString() ?? '0') ?? 0;
+    final investedVal = num.tryParse(data['invested']?.toString() ?? '0') ?? (totalVal - cashVal > 0 ? totalVal - cashVal : 0);
+    final posCount = data['positions'] ?? 0;
+
+    final t1 = num.tryParse(data['tier1_usd']?.toString() ?? '0') ?? 0;
+    final t2 = num.tryParse(data['tier2_usd']?.toString() ?? '0') ?? 0;
+    final t3 = num.tryParse(data['tier3_usd']?.toString() ?? '0') ?? 0;
+
+    return Container(
+      color: isDark ? const Color(0xff07111f) : const Color(0xfff5f7fb),
+      child: RefreshIndicator(
+        onRefresh: refresh,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
           children: [
-            Expanded(
-              child: Text(
-                'Bot dashboard',
-              style: const TextStyle(color: Color(0xffedf5ff), fontFamily: 'monospace', fontWeight: FontWeight.bold, letterSpacing: 1),
+            // ── Live Engine Status Banner ──────────────────────────────────
+            Card(
+              color: isDark ? const Color(0xff10233d) : Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(
+                  color: isRunning
+                      ? const Color(0xff22c55e).withOpacity(0.4)
+                      : (isDark ? const Color(0x334a74a9) : const Color(0xffe2e8f0)),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: isRunning
+                            ? const Color(0x2022c55e)
+                            : (isDark ? const Color(0x2094a3b8) : const Color(0xfff1f5f9)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        isRunning ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                        color: isRunning ? const Color(0xff22c55e) : const Color(0xff94a3b8),
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                isRunning ? 'MAX ALPHA RUNNING' : 'ENGINE STOPPED',
+                                style: TextStyle(
+                                  color: isRunning ? const Color(0xff22c55e) : (isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b)),
+                                  fontFamily: 'monospace',
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  letterSpacing: 0.8,
+                                ),
+                              ),
+                              if (isRunning) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xff22c55e),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            isRunning
+                                ? 'Live cycles updating dynamically'
+                                : 'Tap Run MaxAlpha to start trading engine',
+                            style: TextStyle(
+                              color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.refresh_rounded),
+                      onPressed: refresh,
+                      tooltip: 'Refresh Now',
+                    ),
+                  ],
+                ),
               ),
             ),
-            IconButton(onPressed: refresh, icon: const Icon(Icons.refresh)),
+            const SizedBox(height: 12),
+
+            // ── Market Regime Card ──────────────────────────────────────────
+            Card(
+              color: isDark ? const Color(0xff0b1729) : Colors.white,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'MARKET REGIME',
+                          style: TextStyle(
+                            color: Color(0xff9fb4d0),
+                            fontSize: 10,
+                            letterSpacing: 1.1,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          regimeStr.toUpperCase(),
+                          style: TextStyle(
+                            color: isDark ? const Color(0xffedf5ff) : const Color(0xff10233d),
+                            fontFamily: 'monospace',
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    _regimeBadge(regimeStr),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // ── Metric Grid ────────────────────────────────────────────────
+            GridView.count(
+              crossAxisCount: MediaQuery.of(context).size.width > 650 ? 4 : 2,
+              childAspectRatio: 1.5,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              children: [
+                _metric('PORTFOLIO', '₹${totalVal.toStringAsFixed(0)}', isDark),
+                _metric('CASH', '₹${cashVal.toStringAsFixed(0)}', isDark),
+                _metric('INVESTED', '₹${investedVal.toStringAsFixed(0)}', isDark),
+                _metric('POSITIONS', '$posCount / 7', isDark),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // ── Tier Allocation Section ────────────────────────────────────
+            Text(
+              'TIER ALLOCATION',
+              style: TextStyle(
+                color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
+                fontSize: 10,
+                letterSpacing: 1.2,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _tierCard('Tier 1 — Momentum Smallcaps', 'Target: Rs 20 – Rs 250', t1, totalVal, const Color(0xfffb923c), isDark),
+            const SizedBox(height: 8),
+            _tierCard('Tier 2 — Midcaps', 'Target: Rs 250 – Rs 1,500', t2, totalVal, const Color(0xff3b82f6), isDark),
+            const SizedBox(height: 8),
+            _tierCard('Tier 3 — Blue Chip / ETF', 'Target: Core allocation', t3, totalVal, const Color(0xff22c55e), isDark),
+            const SizedBox(height: 16),
+
+            // ── Active Positions Section ───────────────────────────────────
+            if (positionsList.isNotEmpty) ...[
+              Text(
+                'OPEN POSITIONS (${positionsList.length})',
+                style: TextStyle(
+                  color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
+                  fontSize: 10,
+                  letterSpacing: 1.2,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                color: isDark ? const Color(0xff10233d) : Colors.white,
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: positionsList.length,
+                  separatorBuilder: (_, __) => Divider(height: 1, color: isDark ? const Color(0x284a74a9) : const Color(0xffe5e7eb)),
+                  itemBuilder: (ctx, idx) {
+                    final item = positionsList[idx] as Map<String, dynamic>;
+                    final sym = item['symbol']?.toString() ?? 'STOCK';
+                    final qty = item['qty'] ?? item['shares'] ?? 0;
+                    final buyPx = num.tryParse(item['entry_price']?.toString() ?? item['price']?.toString() ?? '0') ?? 0;
+                    final curPx = num.tryParse(item['current_price']?.toString() ?? buyPx.toString()) ?? buyPx;
+                    final pnl = num.tryParse(item['pnl']?.toString() ?? '0') ?? (curPx - buyPx) * (num.tryParse(qty.toString()) ?? 1);
+                    final isPos = pnl >= 0;
+
+                    return ListTile(
+                      dense: true,
+                      title: Text(sym, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 14)),
+                      subtitle: Text('Qty: $qty • Buy: ₹${buyPx.toStringAsFixed(1)}', style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 11)),
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            '₹${curPx.toStringAsFixed(1)}',
+                            style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 13),
+                          ),
+                          Text(
+                            '${isPos ? '+' : ''}₹${pnl.toStringAsFixed(1)}',
+                            style: TextStyle(color: isPos ? const Color(0xff22c55e) : const Color(0xffef4444), fontWeight: FontWeight.bold, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // ── Cycle History Log Section ──────────────────────────────────
+            Text(
+              'LIVE CYCLE HISTORY (${historyList.length})',
+              style: TextStyle(
+                color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
+                fontSize: 10,
+                letterSpacing: 1.2,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Card(
+              color: isDark ? const Color(0xff10233d) : Colors.white,
+              child: historyList.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Center(
+                        child: Text(
+                          'No cycles completed yet.\nEngine will record data after every trading cycle.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 12),
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: historyList.length > 15 ? 15 : historyList.length,
+                      separatorBuilder: (_, __) => Divider(height: 1, color: isDark ? const Color(0x284a74a9) : const Color(0xffe5e7eb)),
+                      itemBuilder: (ctx, idx) {
+                        // Reverse so latest is on top
+                        final item = (historyList.reversed.toList())[idx] as Map<String, dynamic>;
+                        final cycle = item['cycle'] ?? historyList.length - idx;
+                        final tot = num.tryParse(item['total_usd']?.toString() ?? item['total']?.toString() ?? '0') ?? 0;
+                        final reg = item['regime']?.toString() ?? 'NORMAL';
+                        final sigs = item['signals'] ?? 0;
+                        final ts = item['ts']?.toString() ?? '';
+                        var timeDisplay = '';
+                        if (ts.isNotEmpty) {
+                          try {
+                            final dt = DateTime.parse(ts).toLocal();
+                            timeDisplay = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+                          } catch (_) {}
+                        }
+
+                        return ListTile(
+                          dense: true,
+                          leading: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xfff97316).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              'C#$cycle',
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                color: Color(0xfff97316),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                          title: Text(
+                            'Portfolio: ₹${tot.toStringAsFixed(0)}',
+                            style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 13),
+                          ),
+                          subtitle: Text(
+                            'Regime: $reg ${timeDisplay.isNotEmpty ? '• $timeDisplay' : ''}',
+                            style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 11),
+                          ),
+                          trailing: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: sigs > 0 ? const Color(0x2022c55e) : (isDark ? const Color(0x2094a3b8) : const Color(0xfff1f5f9)),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '$sigs Signals',
+                              style: TextStyle(
+                                color: sigs > 0 ? const Color(0xff22c55e) : (isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b)),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            const SizedBox(height: 20),
           ],
         ),
-        const SizedBox(height: 12),
-        Card(
-          color: const Color(0xff10233d),
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Text(
-              'Market regime: ${data['regime'] ?? 'Awaiting first cycle'}',
-              style: const TextStyle(color: Colors.white, fontSize: 18),
-            ),
-          ),
-        ),
-        GridView.count(
-          crossAxisCount: MediaQuery.of(context).size.width > 650 ? 4 : 2,
-          childAspectRatio: 1.6,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          children: [
-            _metric('Portfolio', '₹${data['total'] ?? '—'}'),
-            _metric('Cash', '₹${data['cash'] ?? '—'}'),
-            _metric('Open positions', '${data['positions'] ?? 0}/7'),
-            _metric('Signals', '${data['signals'] ?? 0}'),
-          ],
-        ),
-        const SizedBox(height: 12),
-        const Text('TIER ALLOCATION', style: TextStyle(color: Color(0xff9fb4d0), fontSize: 10, letterSpacing: 1.2, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        GridView.count(
-          crossAxisCount: MediaQuery.of(context).size.width > 650 ? 3 : 1,
-          childAspectRatio: MediaQuery.of(context).size.width > 650 ? 1.8 : 4,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          children: [
-            _tier('Tier 1 — Momentum Smallcaps', 'Rs 20–Rs 250', const Color(0xfffb923c)),
-            _tier('Tier 2 — Midcaps', 'Rs 250–Rs 1,500', const Color(0xff3b82f6)),
-            _tier('Tier 3 — Blue chip / ETF', 'Core allocation', const Color(0xff3b82f6)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Card(
-          color: const Color(0xff0b1729),
-          child: ListTile(
-            leading: Icon(
-              data['running'] == true ? Icons.play_circle : Icons.pause_circle,
-            ),
-            title: Text(
-              data['running'] == true
-                  ? 'Max Alpha is running'
-                  : 'Max Alpha is stopped',
-            ),
-            subtitle: Text(
-              data['running'] == true ? 'Local Python engine is running on this phone.' : 'Use Run MaxAlpha to start the local Python engine.',
-              style: const TextStyle(color: Color(0xff9fb4d0)),
-            ),
-          ),
-        ),
-      ],
-    ),
-  ));
-  Widget _metric(String title, String value) => Card(
-    color: const Color(0xff0b1729),
-    child: Padding(
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(title.toUpperCase(), style: const TextStyle(color: Color(0xff9fb4d0), fontSize: 10, letterSpacing: 1)),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: const TextStyle(color: Color(0xffedf5ff), fontFamily: 'monospace', fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-        ],
       ),
-    ),
-  );
-  Widget _tier(String title, String subtitle, Color accent) => Card(
-    color: const Color(0xff10233d),
-    child: Padding(
-      padding: const EdgeInsets.all(14),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
-        Text(title, style: const TextStyle(color: Color(0xffedf5ff), fontWeight: FontWeight.w600)),
-        const SizedBox(height: 5),
-        Text(subtitle, style: TextStyle(color: accent, fontSize: 11)),
-        const SizedBox(height: 10),
-        Container(height: 5, decoration: BoxDecoration(color: const Color(0xff0b1729), borderRadius: BorderRadius.circular(4))),
-        const SizedBox(height: 6),
-        const Text('No allocation until the first successful cycle', style: TextStyle(color: Color(0xff9fb4d0), fontSize: 10)),
-      ]),
-    ),
-  );
+    );
+  }
+
+  Widget _metric(String title, String value, bool isDark) => Card(
+        color: isDark ? const Color(0xff0b1729) : Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b),
+                  fontSize: 10,
+                  letterSpacing: 1,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                value,
+                style: TextStyle(
+                  color: isDark ? const Color(0xffedf5ff) : const Color(0xff10233d),
+                  fontFamily: 'monospace',
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _tierCard(String title, String subtitle, num val, num total, Color color, bool isDark) {
+    final pct = total > 0 ? (val / total).clamp(0.0, 1.0) : 0.0;
+    return Card(
+      color: isDark ? const Color(0xff10233d) : Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(title, style: TextStyle(color: isDark ? const Color(0xffedf5ff) : const Color(0xff10233d), fontWeight: FontWeight.w600, fontSize: 13)),
+                Text('₹${val.toStringAsFixed(0)}', style: TextStyle(color: color, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 13)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(subtitle, style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 11)),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: pct.toDouble(),
+                backgroundColor: isDark ? const Color(0xff0b1729) : const Color(0xffe2e8f0),
+                color: color,
+                minHeight: 6,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _regimeBadge(String regime) {
+    final u = regime.toUpperCase();
+    Color bg, fg;
+    if (u.contains('BULL')) {
+      bg = const Color(0x2022c55e);
+      fg = const Color(0xff22c55e);
+    } else if (u.contains('BEAR')) {
+      bg = const Color(0x20ef4444);
+      fg = const Color(0xffef4444);
+    } else if (u.contains('CRASH')) {
+      bg = const Color(0x30ef4444);
+      fg = const Color(0xffef4444);
+    } else {
+      bg = const Color(0x203b82f6);
+      fg = const Color(0xff3b82f6);
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: fg.withOpacity(0.3)),
+      ),
+      child: Text(
+        u,
+        style: TextStyle(color: fg, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 11),
+      ),
+    );
+  }
 }
 
 class ExactDashboardPage extends StatefulWidget {

@@ -45,12 +45,13 @@ android {
 
 val stagedPythonDir = layout.buildDirectory.dir("generated/mobile-python")
 val stageMobilePython by tasks.registering(Copy::class) {
-    from(file("../../../agent")) {
-        exclude("__pycache__/**", "**/*.pyc", "mobile_api.py")
+    from(file("../agent")) {
+        exclude("__pycache__/**", "**/*.pyc", "mobile_api.py",
+                "main_ios.py", "mobile_gateway_http.py", "requirements_ios.txt")
         into("agent")
     }
-    from(file("../../../symbol_map.json")) { into("agent") }
-    from(file("../../assets/dashboard_v5_bot2.html")) { into("agent") }
+    from(file("../agent/symbol_map.json")) { into("agent") }
+    from(file("../assets/dashboard_v5_bot2.html")) { into("agent") }
     into(stagedPythonDir)
 }
 
@@ -63,7 +64,14 @@ chaquopy {
         // Select the Android runtime version first, then use the matching
         // local interpreter to build dependency metadata.
         version = "3.11"
-        buildPython("C:/Users/hanu2/AppData/Local/Programs/Python/Python311/python.exe")
+        // Use CHAQUOPY_PYTHON env var for CI (Codemagic macOS: python3).
+        // Falls back to the local Windows path for dev machines.
+        val pyExe = System.getenv("CHAQUOPY_PYTHON")
+            ?: if (org.gradle.internal.os.OperatingSystem.current().isWindows)
+                "C:/Users/hanu2/AppData/Local/Programs/Python/Python311/python.exe"
+               else
+                "/usr/bin/python3"
+        buildPython(pyExe)
         pip {
             install("requests>=2.31.0")
             install("python-dotenv>=1.0.1")
