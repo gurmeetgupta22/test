@@ -167,8 +167,6 @@ class Session extends ChangeNotifier {
   static const _secure = FlutterSecureStorage();
   late SharedPreferences _prefs;
   String deviceId = '';
-  // Deliberately memory-only: this unlock is valid while this Flutter process
-  // is alive (including background/resume), but never survives a full relaunch.
   String? _activeSessionToken;
   bool get isUnlocked => _activeSessionToken != null;
   late MobileApi api;
@@ -178,11 +176,16 @@ class Session extends ChangeNotifier {
   String? dashboardUrl;
   Map<String, String> botConfig = {};
 
+  // ── Centralized Data State & Throttled Polling ─────────────────────────────
+  Map<String, dynamic> dashboardData = {};
+  List<String> logLines = [];
+  bool isEngineRunning = false;
+  bool isPolling = false;
+  Timer? _poller;
+
   Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
     deviceId = _prefs.getString('device_id') ?? _id();
-    // Never restore an unlock from disk. The token is created after a successful
-    // password check and remains in this in-memory Session for the app lifetime.
     _activeSessionToken = null;
     dark = _prefs.getBool('dark_theme') ?? false;
     configured = _prefs.getBool('bot_configured') ?? false;
@@ -197,6 +200,35 @@ class Session extends ChangeNotifier {
     await _prefs.setString('device_id', deviceId);
     ready = true;
     notifyListeners();
+    startPolling();
+  }
+
+  void startPolling() {
+    _poller?.cancel();
+    _poller = Timer.periodic(const Duration(seconds: 4), (_) => fetchLatestData());
+    fetchLatestData();
+  }
+
+  void stopPolling() {
+    _poller?.cancel();
+    _poller = null;
+  }
+
+  Future<void> fetchLatestData() async {
+    if (isPolling) return;
+    isPolling = true;
+    try {
+      final dash = await api.dashboard();
+      final l = await api.logs();
+      isEngineRunning = l['running'] == true;
+      dash['running'] = isEngineRunning;
+      dashboardData = dash;
+      logLines = List<String>.from(l['lines'] ?? []);
+      notifyListeners();
+    } catch (_) {
+    } finally {
+      isPolling = false;
+    }
   }
 
   String _id() => List.generate(
@@ -226,6 +258,7 @@ class Session extends ChangeNotifier {
     }
     _activeSessionToken = _newSessionToken();
     notifyListeners();
+    startPolling();
   }
 
   Future<void> saveBotConfig(Map<String, String> value) async {
@@ -242,6 +275,7 @@ class Session extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    stopPolling();
     _activeSessionToken = null;
     notifyListeners();
   }
@@ -256,6 +290,126 @@ class Session extends ChangeNotifier {
     await _prefs.setBool('dark_theme', value);
     notifyListeners();
   }
+}
+
+// ── UNIFIED MODERN START BOT DIALOG ──────────────────────────────────────────
+Future<void> showStartBotSheet(BuildContext context, Session session) async {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  final budgetController = TextEditingController(text: '50000');
+  String selectedMode = session.botConfig['trading_mode'] ?? 'paper';
+
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setSheetState) => Container(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).viewInsets.bottom + 24),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xff0b1729) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          border: Border.all(color: isDark ? const Color(0x334a74a9) : const Color(0xffcbd5e1)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(color: isDark ? const Color(0xff334155) : const Color(0xffcbd5e1), borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: const Color(0x20f97316), borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.play_arrow_rounded, color: Color(0xfff97316), size: 24),
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('START MAX ALPHA QUANT', style: TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 16, color: isDark ? Colors.white : const Color(0xff10233d))),
+                    const SizedBox(height: 2),
+                    Text('Configure trading budget & execution mode', style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 11)),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Text('TRADING BUDGET (₹)', style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 10, letterSpacing: 1.1, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: budgetController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 16),
+              decoration: const InputDecoration(
+                prefixText: '₹ ',
+                hintText: '50000',
+              ),
+            ),
+            const SizedBox(height: 10),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: ['10000', '25000', '50000', '100000'].map((preset) => Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text('₹$preset', style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                    selected: budgetController.text == preset,
+                    onSelected: (sel) {
+                      if (sel) setSheetState(() => budgetController.text = preset);
+                    },
+                  ),
+                )).toList(),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text('EXECUTION MODE', style: TextStyle(color: isDark ? const Color(0xff9fb4d0) : const Color(0xff64748b), fontSize: 10, letterSpacing: 1.1, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'paper', label: Text('Paper Trading')),
+                ButtonSegment(value: 'live', label: Text('Live Dhan Broker')),
+              ],
+              selected: {selectedMode},
+              onSelectionChanged: (s) => setSheetState(() => selectedMode = s.first),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(backgroundColor: const Color(0xff22c55e)),
+                    icon: const Icon(Icons.flash_on_rounded),
+                    label: const Text('Launch Trading Engine'),
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      final val = double.tryParse(budgetController.text.replaceAll(',', ''));
+                      await session.api.start(val);
+                      await session.fetchLatestData();
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class MaxAlphaApp extends StatefulWidget {
@@ -477,11 +631,10 @@ class _AppShellState extends State<AppShell> {
   int page = 0;
   bool setupChecked = false, setupNeeded = false;
   late final List<Widget> _pages;
+
   @override
   void initState() {
     super.initState();
-    // Keep every section mounted. In particular, this preserves the WebView
-    // dashboard and its Flutter-provided data across drawer navigation.
     _pages = [
       DashboardPage(session: widget.session),
       RunPage(session: widget.session),
@@ -508,16 +661,40 @@ class _AppShellState extends State<AppShell> {
     if (!setupChecked) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    final title = setupNeeded ? 'Bot setup' : ['Dashboard', 'Run MaxAlpha', 'HTML Dashboard', 'Settings'][page];
+    final title = setupNeeded ? 'Bot setup' : ['Dashboard', 'Run Engine', 'HTML View', 'Settings'][page];
+    final isRunning = widget.session.isEngineRunning;
+
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 68,
         titleSpacing: 8,
         title: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text(title, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700, fontSize: 17, letterSpacing: .4)),
+          Row(
+            children: [
+              Text(title, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700, fontSize: 17, letterSpacing: .4)),
+              const SizedBox(width: 8),
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: isRunning ? const Color(0xff22c55e) : const Color(0xff64748b),
+                  shape: BoxShape.circle,
+                  boxShadow: isRunning ? [const BoxShadow(color: Color(0xff22c55e), blurRadius: 6)] : null,
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 2),
-          Text(page == 1 && !setupNeeded ? 'LOCAL ENGINE CONTROL' : 'MAX ALPHA', style: TextStyle(color: Theme.of(context).colorScheme.outline, fontSize: 9, letterSpacing: 1.1)),
+          Text(isRunning ? 'ENGINE ACTIVE • DISCOVER MODE' : 'LOCAL ENGINE STANDBY', style: TextStyle(color: Theme.of(context).colorScheme.outline, fontSize: 9, letterSpacing: 1.1)),
         ]),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: () => widget.session.fetchLatestData(),
+            tooltip: 'Refresh Data',
+          ),
+          const SizedBox(width: 4),
+        ],
         leading: Builder(builder: (ctx) => IconButton(icon: const Icon(Icons.menu_rounded), onPressed: () => Scaffold.of(ctx).openDrawer())),
       ),
       drawer: Drawer(
@@ -527,27 +704,34 @@ class _AppShellState extends State<AppShell> {
           padding: EdgeInsets.zero,
           children: [
             Container(
-              height: 175,
+              height: 185,
               padding: const EdgeInsets.fromLTRB(24, 56, 24, 20),
               decoration: const BoxDecoration(gradient: LinearGradient(colors: [Color(0xff10233d), Color(0xff07111f)])),
-              child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Icon(Icons.auto_graph_rounded, color: Color(0xfff97316), size: 30),
-                Spacer(),
-                Text('MAX ALPHA', style: TextStyle(color: Colors.white, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 20, letterSpacing: 1.4)),
-                SizedBox(height: 4), Text('LOCAL PYTHON TRADING', style: TextStyle(color: Color(0xff9fb4d0), fontSize: 10, letterSpacing: 1.1)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Icon(Icons.auto_graph_rounded, color: Color(0xfff97316), size: 32),
+                const Spacer(),
+                const Text('MAX ALPHA', style: TextStyle(color: Colors.white, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 22, letterSpacing: 1.4)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Container(width: 7, height: 7, decoration: BoxDecoration(color: isRunning ? const Color(0xff22c55e) : const Color(0xff94a3b8), shape: BoxShape.circle)),
+                    const SizedBox(width: 6),
+                    Text(isRunning ? 'ENGINE RUNNING' : 'ENGINE STANDBY', style: TextStyle(color: isRunning ? const Color(0xff22c55e) : const Color(0xff9fb4d0), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+                  ],
+                ),
               ]),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text('WORKSPACE', style: TextStyle(color: Theme.of(context).colorScheme.outline, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text('NAVIGATION', style: TextStyle(color: Theme.of(context).colorScheme.outline, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
             ),
             const SizedBox(height: 6),
             _nav(0, Icons.grid_view_rounded, 'Dashboard'),
-            _nav(1, Icons.play_circle_fill_rounded, 'Run MaxAlpha'),
+            _nav(1, Icons.terminal_rounded, 'Run & Engine Logs'),
             _nav(2, Icons.web_rounded, 'HTML Web View'),
-            const Divider(indent: 20, endIndent: 20),
-            _nav(3, Icons.tune_rounded, 'Settings'),
+            const Divider(indent: 20, endIndent: 20, height: 24),
+            _nav(3, Icons.tune_rounded, 'Settings & Control'),
           ],
         ),
       ),
@@ -564,20 +748,20 @@ class _AppShellState extends State<AppShell> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final selected = page == index;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
       child: Container(
         decoration: BoxDecoration(
           color: selected
               ? (isDark ? const Color(0x26f97316) : const Color(0xfffff1e9))
               : (isDark ? const Color(0xff0d1c2e) : const Color(0xfff7f9fc)),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: selected ? const Color(0x99f97316) : (isDark ? const Color(0x334a74a9) : const Color(0xffe2e8f0))),
         ),
         child: ListTile(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           leading: Icon(icon, color: selected ? const Color(0xfff97316) : (isDark ? const Color(0xff9fb4d0) : const Color(0xff52708f))),
-          title: Text(label, style: TextStyle(color: selected ? const Color(0xffe95f17) : (isDark ? const Color(0xffedf5ff) : const Color(0xff10233d)), fontWeight: selected ? FontWeight.w700 : FontWeight.w600)),
-          trailing: Icon(Icons.chevron_right_rounded, color: selected ? const Color(0xfff97316) : (isDark ? const Color(0xff6f88aa) : const Color(0xff94a3b8))),
+          title: Text(label, style: TextStyle(color: selected ? const Color(0xffe95f17) : (isDark ? const Color(0xffedf5ff) : const Color(0xff10233d)), fontWeight: selected ? FontWeight.w700 : FontWeight.w600, fontSize: 13.5)),
+          trailing: Icon(Icons.chevron_right_rounded, color: selected ? const Color(0xfff97316) : (isDark ? const Color(0xff6f88aa) : const Color(0xff94a3b8)), size: 18),
           onTap: () {
             Navigator.pop(context);
             setState(() => page = index);
@@ -706,6 +890,7 @@ class _SetupPageState extends State<SetupPage> {
   );
 }
 
+// ── NATIVE MOBILE DASHBOARD PAGE ─────────────────────────────────────────────
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.session});
   final Session session;
@@ -714,106 +899,20 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  Map<String, dynamic> data = {};
-  bool loading = true;
-  Timer? _autoRefreshTimer;
   int _activeSubTab = 0; // 0: P&L Breakdown, 1: Positions, 2: Cycle History, 3: Orders
-
-  @override
-  void initState() {
-    super.initState();
-    refresh();
-    // Auto refresh every 3 seconds so live bot cycles show up dynamically
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) => refresh());
-  }
-
-  @override
-  void dispose() {
-    _autoRefreshTimer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> refresh() async {
-    try {
-      final res = await widget.session.api.dashboard();
-      final logs = await widget.session.api.logs();
-      res['running'] = logs['running'] == true;
-      if (mounted) {
-        setState(() {
-          data = res;
-          loading = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => loading = false);
-    }
-  }
-
-  Future<void> _toggleBotStatus() async {
-    final isRunning = data['running'] == true;
-    if (isRunning) {
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Stop MaxAlpha Bot?'),
-          content: const Text('The bot will safely complete its current cycle and stop trading.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xffef4444)),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Stop Engine'),
-            ),
-          ],
-        ),
-      );
-      if (confirm == true) {
-        await widget.session.api.stop();
-        await refresh();
-      }
-    } else {
-      final input = TextEditingController();
-      final raw = await showDialog<String?>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Start MaxAlpha Engine'),
-          content: TextField(
-            controller: input,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              hintText: 'Wallet budget (leave empty for default ₹50,000)',
-              labelText: 'Trading Budget (₹)',
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xff22c55e)),
-              onPressed: () => Navigator.pop(ctx, input.text),
-              child: const Text('Start Trading'),
-            ),
-          ],
-        ),
-      );
-      if (raw != null) {
-        final amount = raw.trim().isEmpty ? null : double.tryParse(raw.replaceAll(',', ''));
-        await widget.session.api.start(amount);
-        await refresh();
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final data = widget.session.dashboardData;
     final historyList = (data['history'] as List?) ?? [];
     final positionsList = (data['positions_detail'] as List?) ?? [];
     final tradeStats = (data['trade_stats'] as Map<String, dynamic>?) ?? {};
     final ordersList = (tradeStats['order_history'] as List?) ?? (tradeStats['closed_trades'] as List?) ?? [];
-    final isRunning = data['running'] == true;
+    final isRunning = widget.session.isEngineRunning;
     final regimeStr = (data['regime'] as String?) ?? 'NEUTRAL';
     final regimeScore = num.tryParse(data['regime_score']?.toString() ?? '0.5') ?? 0.5;
-    
+
     final totalVal = num.tryParse(data['total']?.toString() ?? '0') ?? 0;
     final cashVal = num.tryParse(data['cash']?.toString() ?? '0') ?? 0;
     final investedVal = num.tryParse(data['invested']?.toString() ?? '0') ?? (totalVal - cashVal > 0 ? totalVal - cashVal : 0);
@@ -822,14 +921,12 @@ class _DashboardPageState extends State<DashboardPage> {
     final t2 = num.tryParse(data['tier2_usd']?.toString() ?? '0') ?? 0;
     final t3 = num.tryParse(data['tier3_usd']?.toString() ?? '0') ?? 0;
 
-    // Calculate session start value from history or total
     final startVal = historyList.isNotEmpty
         ? (num.tryParse(historyList.first['wallet_cap']?.toString() ?? historyList.first['total_usd']?.toString() ?? totalVal.toString()) ?? totalVal)
         : totalVal;
     final sessionPnl = totalVal > 0 && startVal > 0 ? totalVal - startVal : 0.0;
     final sessionPct = startVal > 0 ? (sessionPnl / startVal * 100) : 0.0;
 
-    // Calculate unrealized P&L and profitable sellers
     num openPnl = 0;
     int winnersCount = 0;
     for (final pos in positionsList) {
@@ -842,7 +939,6 @@ class _DashboardPageState extends State<DashboardPage> {
       if (pnl > 0) winnersCount++;
     }
 
-    // Win rate calculations
     final wins = num.tryParse(tradeStats['wins']?.toString() ?? '0')?.toInt() ?? 0;
     final losses = num.tryParse(tradeStats['losses']?.toString() ?? '0')?.toInt() ?? 0;
     final totalTrades = wins + losses;
@@ -854,7 +950,13 @@ class _DashboardPageState extends State<DashboardPage> {
         backgroundColor: isRunning ? const Color(0xffef4444) : const Color(0xfff97316),
         foregroundColor: Colors.white,
         elevation: 6,
-        onPressed: _toggleBotStatus,
+        onPressed: () {
+          if (isRunning) {
+            widget.session.api.stop().then((_) => widget.session.fetchLatestData());
+          } else {
+            showStartBotSheet(context, widget.session);
+          }
+        },
         icon: Icon(isRunning ? Icons.stop_circle_rounded : Icons.play_arrow_rounded),
         label: Text(
           isRunning ? 'STOP BOT' : 'RUN BOT',
@@ -862,7 +964,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       ),
       body: RefreshIndicator(
-        onRefresh: refresh,
+        onRefresh: () => widget.session.fetchLatestData(),
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -1002,7 +1104,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             const SizedBox(height: 14),
 
-            // ── MARKET REGIME & ALLOCATION CAROUSEL/BANNER ───────────────────
+            // ── MARKET REGIME BANNER ──────────────────────────────────────────
             _buildRegimeBanner(regimeStr, regimeScore, t1, t2, t3, totalVal, isDark),
             const SizedBox(height: 14),
 
@@ -1062,7 +1164,7 @@ class _DashboardPageState extends State<DashboardPage> {
             const SizedBox(height: 8),
             _tierDetailCard('Tier 3 — Bluechip / ETF', 'Target: Core Safety • 10% Bull Alloc', t3, totalVal, const Color(0xff22c55e), isDark),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 32),
           ],
         ),
       ),
@@ -1093,7 +1195,7 @@ class _DashboardPageState extends State<DashboardPage> {
               color: selected
                   ? const Color(0xfff97316)
                   : (isDark ? const Color(0xff6f88aa) : const Color(0xff64748b)),
-              fontSize: 11,
+              fontSize: 10.5,
               fontWeight: selected ? FontWeight.bold : FontWeight.w600,
             ),
           ),
@@ -1102,7 +1204,7 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  // ── 1. SCROLLABLE P&L BREAKDOWN TABLE (User requested max height scrollable container!) ──
+  // ── 1. SCROLLABLE P&L BREAKDOWN TABLE ──
   Widget _buildScrollablePnlBreakdown(List historyList, num sessionStartValue, bool isDark) {
     if (historyList.isEmpty) {
       return Container(
@@ -1138,7 +1240,6 @@ class _DashboardPageState extends State<DashboardPage> {
             ],
           ),
           const SizedBox(height: 10),
-          // FIXED HEIGHT SCROLLABLE CONTAINER (As explicitly requested by user!)
           SizedBox(
             height: 300,
             child: Scrollbar(
@@ -1147,12 +1248,10 @@ class _DashboardPageState extends State<DashboardPage> {
                 itemCount: historyList.length,
                 separatorBuilder: (ctx, idx) => Divider(height: 1, color: isDark ? const Color(0x204a74a9) : const Color(0xfff1f5f9)),
                 itemBuilder: (ctx, idx) {
-                  // Latest cycle at top
                   final item = (historyList.reversed.toList())[idx] as Map<String, dynamic>;
                   final cycleNum = item['cycle'] ?? (historyList.length - idx);
                   final totalUsd = num.tryParse(item['total_usd']?.toString() ?? '0') ?? 0;
                   
-                  // Compute cycle P&L vs previous cycle
                   num prevVal = sessionStartValue;
                   final origIdx = historyList.length - 1 - idx;
                   if (origIdx > 0) {
@@ -1168,7 +1267,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     child: Row(
                       children: [
                         SizedBox(
-                          width: 70,
+                          width: 65,
                           child: Text(
                             'Cycle $cycleNum',
                             style: TextStyle(
@@ -1187,7 +1286,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               color: isPos ? const Color(0xff22c55e) : const Color(0xffef4444),
                               fontFamily: 'monospace',
                               fontWeight: FontWeight.bold,
-                              fontSize: 12,
+                              fontSize: 11.5,
                             ),
                           ),
                         ),
@@ -1198,12 +1297,12 @@ class _DashboardPageState extends State<DashboardPage> {
                             style: TextStyle(
                               color: isDark ? const Color(0xffedf5ff) : const Color(0xff10233d),
                               fontFamily: 'monospace',
-                              fontSize: 11.5,
+                              fontSize: 11,
                             ),
                           ),
                         ),
                         SizedBox(
-                          width: 60,
+                          width: 50,
                           child: Container(
                             height: 4,
                             decoration: BoxDecoration(
@@ -1222,7 +1321,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 6),
                         SizedBox(
                           width: 55,
                           child: Text(
@@ -1230,7 +1329,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             textAlign: TextAlign.end,
                             style: TextStyle(
                               color: isPos ? const Color(0xff22c55e) : const Color(0xffef4444),
-                              fontSize: 10.5,
+                              fontSize: 10,
                               fontFamily: 'monospace',
                               fontWeight: FontWeight.bold,
                             ),
@@ -1635,7 +1734,6 @@ class ExactDashboardPage extends StatefulWidget {
 
 class _ExactDashboardPageState extends State<ExactDashboardPage> {
   late final WebViewController _controller;
-  Timer? _dashboardTimer;
   bool? _appliedDarkTheme;
   String? _loadedDashboardUrl;
   bool _dashboardLoaded = false;
@@ -1653,7 +1751,6 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
       ));
     widget.session.addListener(_loadDashboardWhenTargetChanges);
     _loadDashboard();
-    _dashboardTimer = Timer.periodic(const Duration(seconds: 5), (_) => _syncHistory());
   }
 
   void _loadDashboardWhenTargetChanges() {
@@ -1674,10 +1771,6 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
 
   Future<void> _openDashboard() async {
     try {
-      // When served via the local HTTP server the HTML fetches performance_v4.json
-      // itself — we only need to dismiss the login screen and boot the dashboard.
-      // When loaded from a Flutter asset we also inject history so the file://
-      // origin can display data without network access.
       final isHttpMode = _loadedDashboardUrl != null;
       final history = isHttpMode
           ? 'null'
@@ -1686,13 +1779,10 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
         (function() {
           const dashboardHeader = document.querySelector('.hdr');
           if (dashboardHeader) dashboardHeader.style.display = 'none';
-          // Flutter owns authentication — bypass the HTML login screen.
           const loginScreen = document.getElementById('ls');
           const app = document.getElementById('app');
           if (loginScreen) loginScreen.style.display = 'none';
           if (app) app.style.display = 'block';
-          // Only inject history when NOT using HTTP server (HTTP mode reads
-          // performance_v4.json directly, giving always-fresh data).
           if ($history !== null) window.__maxAlphaHistory = $history;
           if (!window.__maxAlphaFlutterBooted) {
             window.__maxAlphaFlutterBooted = true;
@@ -1716,30 +1806,8 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
     await _controller.runJavaScript("document.documentElement.style.cssText += '$values';");
   }
 
-  Future<void> _syncHistory() async {
-    try {
-      // HTTP server mode: the dashboard fetches /performance_v4.json directly,
-      // so a JS reload is sufficient — no need to inject data from Dart.
-      // Asset (file://) mode: inject fresh history so the WebView can display it.
-      final isHttpMode = _loadedDashboardUrl != null;
-      if (isHttpMode) {
-        // Tell the page to re-read the JSON from the server
-        await _controller.runJavaScript(
-          'if (document.getElementById("app") && document.getElementById("app").style.display === "block") { loadAll(); if(typeof updateAgentStatus==="function") updateAgentStatus(); }'
-        );
-      } else {
-        final snapshot = await widget.session.api.dashboard();
-        await _controller.runJavaScript(
-          'window.__maxAlphaHistory = ${jsonEncode(snapshot["history"] ?? const [])}; '
-          'if (document.getElementById("app") && document.getElementById("app").style.display === "block") { loadAll(); if(typeof updateAgentStatus==="function") updateAgentStatus(); }'
-        );
-      }
-    } catch (_) {}
-  }
-
   @override
   void dispose() {
-    _dashboardTimer?.cancel();
     widget.session.removeListener(_loadDashboardWhenTargetChanges);
     super.dispose();
   }

@@ -138,6 +138,7 @@ def _live_dashboard_record() -> Dict[str, Any] | None:
 
 def dashboard() -> Dict[str, Any]:
     """Return live portfolio snapshot & history log dynamically."""
+    _prepare_runtime()
     records = []
     path = Path(PERFORMANCE_FILE)
     if path.exists():
