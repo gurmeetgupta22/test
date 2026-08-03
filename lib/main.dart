@@ -16,11 +16,18 @@ void main() async {
   // Start the embedded Python bot engine on iOS.
   // On Android this is a no-op — Chaquopy handles everything via MethodChannel.
   if (Platform.isIOS) {
-    SeriousPython.run(
-      appFileName: 'main_ios.py',
-      // Pass the app module path so Python imports resolve correctly.
-      // serious_python stages the agent/ dir at <resources>/app/.
-    );
+    try {
+      unawaited(
+        SeriousPython.run(
+          appFileName: 'main_ios.py',
+        ).catchError((Object err) {
+          debugPrint('SeriousPython iOS server startup error: $err');
+          return null;
+        }),
+      );
+    } catch (e) {
+      debugPrint('SeriousPython startup exception: $e');
+    }
   }
   runApp(const MaxAlphaApp());
 }
