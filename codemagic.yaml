@@ -13,6 +13,7 @@ workflows:
       - name: Set up dependencies and Flutter packages
         script: |
           flutter pub get
+          cd ios && pod install
       - name: Package Python app for iOS via serious_python
         script: |
           export SERIOUS_PYTHON_VERSION=3.12
