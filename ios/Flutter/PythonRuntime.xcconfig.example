@@ -1,0 +1,5 @@
+// Copy this file to PythonRuntime.xcconfig on macOS after adding the runtime.
+// The XCFramework must export the CPython C headers as <Python/Python.h>.
+FRAMEWORK_SEARCH_PATHS = $(inherited) $(PROJECT_DIR)/Frameworks
+OTHER_LDFLAGS = $(inherited) -framework Python
+GCC_PREPROCESSOR_DEFINITIONS = $(inherited) MAX_ALPHA_PYTHON=1
