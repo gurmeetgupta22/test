@@ -25,11 +25,7 @@ _stop_event: threading.Event | None = None
 _dashboard_server: ThreadingHTTPServer | None = None
 _dashboard_thread: threading.Thread | None = None
 
-# Dashboard response cache — avoids re-reading performance_v4.json on every poll
-_dashboard_cache: Dict[str, Any] | None = None
-_dashboard_cache_mtime: float = 0.0
-_dashboard_cache_ts: float = 0.0
-_CACHE_STALENESS_S: float = 30.0  # force refresh every 30 s even if file unchanged
+
 
 
 class _MobileLogHandler(logging.Handler):
@@ -109,42 +105,6 @@ def configure(values: Dict[str, Any]) -> Dict[str, str]:
     return provider
 
 
-def _live_dashboard_record() -> Dict[str, Any] | None:
-    """Expose the initialized bot portfolio before or during its active cycles.
-
-    This is display-only: it reads the existing executor and never trades,
-    scores, records, or mutates bot state.
-    """
-    if _bot is None:
-        return None
-    try:
-        portfolio = _bot.executor.get_portfolio()
-        tracker = _bot.tracker
-        regime = _bot._regime_cache
-        analyses = _bot.executor.analyze_positions(portfolio) if hasattr(_bot.executor, "analyze_positions") else []
-        stats = _bot.executor.trade_stats() if hasattr(_bot.executor, "trade_stats") else {}
-        return {
-            "cycle": getattr(tracker, "cycle", 1) if tracker else 1,
-            "ts": datetime.now().astimezone().isoformat(),
-            "total_usd": round(portfolio.total_usd, 2),
-            "cash_usd": round(portfolio.cash_usd, 2),
-            "wallet_cap": round(getattr(_bot.executor, "_initial_budget", portfolio.total_usd), 2),
-            "invested_usd": round(portfolio.invested_usd, 2),
-            "positions": portfolio.open_count,
-            "tier1_usd": round(portfolio.tier1_value, 2),
-            "tier2_usd": round(portfolio.tier2_value, 2),
-            "tier3_usd": round(portfolio.tier3_value, 2),
-            "regime": regime.state if regime else "Starting",
-            "regime_score": regime.score if regime else 0.0,
-            "signals": 0,
-            "positions_detail": analyses,
-            "trade_stats": stats,
-        }
-    except Exception as exc:
-        _logs.append(f"Live dashboard read error: {exc}")
-        return None
-
-
 def _fallback_record() -> Dict[str, Any]:
     """Read saved portfolio_state_v4.json or budget fallback when bot cycle hasn't recorded yet."""
     budget = _previous_budget()
@@ -208,98 +168,12 @@ def _fallback_record() -> Dict[str, Any]:
     }
 
 
-def _sync_performance_file(record: Dict[str, Any]) -> None:
-    """Ensure performance_v4.json exists on disk for HTTP webview & history."""
-    try:
-        path = Path(PERFORMANCE_FILE)
-        records = []
-        if path.exists():
-            try:
-                records = json.loads(path.read_text(encoding="utf-8-sig"))
-            except Exception:
-                records = []
-        if not records or records[-1].get("cycle") != record.get("cycle"):
-            records.append(record)
-        else:
-            records[-1] = record
-        path.write_text(json.dumps(records, indent=2), encoding="utf-8")
-    except Exception as exc:
-        _logs.append(f"Performance sync error: {exc}")
-
-
-def _invalidate_dashboard_cache() -> None:
-    """Call this whenever the bot writes a new cycle so the next poll sees fresh data."""
-    global _dashboard_cache, _dashboard_cache_mtime, _dashboard_cache_ts
-    _dashboard_cache = None
-    _dashboard_cache_mtime = 0.0
-    _dashboard_cache_ts = 0.0
-
-
 def dashboard() -> Dict[str, Any]:
-    """Return live portfolio snapshot & history log dynamically.
-
-    Caches the response and only rebuilds it when performance_v4.json has
-    actually changed on disk (mtime check) or after _CACHE_STALENESS_S seconds.
-    While the bot is running, live data always bypasses the cache.
-    """
-    import time
-    global _dashboard_cache, _dashboard_cache_mtime, _dashboard_cache_ts
-
+    """Return live portfolio snapshot & history log dynamically by reading performance_v4.json."""
     _prepare_runtime()
 
-    # While the bot is actively running, always return fresh live data
-    live = _live_dashboard_record()
-    if live:
-        _sync_performance_file(live)
-        path = Path(PERFORMANCE_FILE)
-        records: list = []
-        if path.exists():
-            try:
-                records = json.loads(path.read_text(encoding="utf-8-sig"))
-            except Exception:
-                records = []
-        history = list(records[-500:]) if records else []
-        if not history or history[-1].get("cycle") != live.get("cycle"):
-            history.append(live)
-        else:
-            history[-1] = live
-        result = {
-            "total": live["total_usd"],
-            "cash": live["cash_usd"],
-            "invested": live.get("invested_usd", 0),
-            "positions": live["positions"],
-            "signals": live.get("signals", 0),
-            "regime": live["regime"],
-            "regime_score": live.get("regime_score", 0.0),
-            "tier1_usd": live.get("tier1_usd", 0),
-            "tier2_usd": live.get("tier2_usd", 0),
-            "tier3_usd": live.get("tier3_usd", 0),
-            "positions_detail": live.get("positions_detail", []),
-            "trade_stats": live.get("trade_stats", {}),
-            "history": history,
-            "running": True,
-        }
-        _dashboard_cache = result
-        _dashboard_cache_ts = time.monotonic()
-        return result
-
-    # Bot is idle — use cached result if the JSON file hasn't changed
     path = Path(PERFORMANCE_FILE)
-    now = time.monotonic()
-    current_mtime = path.stat().st_mtime if path.exists() else 0.0
-    cache_age = now - _dashboard_cache_ts
-    if (
-        _dashboard_cache is not None
-        and current_mtime == _dashboard_cache_mtime
-        and cache_age < _CACHE_STALENESS_S
-    ):
-        # File unchanged and cache is fresh — return cached result with updated running flag
-        cached = dict(_dashboard_cache)
-        cached["running"] = is_running()
-        return cached
-
-    # Cache miss: read file and build response
-    records = []
+    records: list = []
     if path.exists():
         try:
             records = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -307,8 +181,10 @@ def dashboard() -> Dict[str, Any]:
             _logs.append(f"Dashboard read error: {exc}")
 
     if records:
-        record = records[-1]
-        result = {
+        record = dict(records[-1])
+        return {
+            "cycle": record.get("cycle", 0),
+            "ts": record.get("ts", ""),
             "total": record.get("total_usd", 0),
             "cash": record.get("cash_usd", 0),
             "invested": record.get("invested_usd", 0),
@@ -324,15 +200,12 @@ def dashboard() -> Dict[str, Any]:
             "history": records[-500:],
             "running": is_running(),
         }
-        _dashboard_cache = result
-        _dashboard_cache_mtime = current_mtime
-        _dashboard_cache_ts = now
-        return result
 
-    # Fallback to portfolio_state_v4.json or initial budget
+    # No JSON file yet — fall back to portfolio_state_v4.json or budget
     fb = _fallback_record()
-    _sync_performance_file(fb)
-    result = {
+    return {
+        "cycle": fb.get("cycle", 0),
+        "ts": fb.get("ts", ""),
         "total": fb["total_usd"],
         "cash": fb["cash_usd"],
         "invested": fb["invested_usd"],
@@ -348,10 +221,6 @@ def dashboard() -> Dict[str, Any]:
         "history": [fb],
         "running": is_running(),
     }
-    _dashboard_cache = result
-    _dashboard_cache_mtime = current_mtime
-    _dashboard_cache_ts = now
-    return result
 
 
 def clear_history() -> Dict[str, Any]:
@@ -366,7 +235,6 @@ def clear_history() -> Dict[str, Any]:
                 cleared_files.append(filename)
             except Exception as exc:
                 _logs.append(f"Failed to delete {filename}: {exc}")
-    _invalidate_dashboard_cache()
     _logs.append(f"Cleared bot history files: {cleared_files}")
     return {"ok": True, "cleared": cleared_files}
 
@@ -445,11 +313,6 @@ def start_bot(budget: float | None = None) -> None:
         _logs.append(f"Starting MaxAlpha with wallet cap Rs{cap:,.2f}")
         _stop_event = threading.Event()
         _bot = MaxAlphaV4(budget=cap, run_mode="discover", stop_event=_stop_event)
-        live = _live_dashboard_record()
-        if live:
-            _sync_performance_file(live)
-        else:
-            _sync_performance_file(_fallback_record())
     except Exception as exc:
         record_error(f"MaxAlpha startup failed: {exc}")
         raise

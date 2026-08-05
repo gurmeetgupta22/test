@@ -647,12 +647,14 @@ function loadAll(){fetchAccount();renderPnlFromHistory();loadPerformanceLog();}
 // file:// fetches, so Flutter injects the current on-device Python history
 // into this variable instead of exposing the state file to Chromium.
 function readPerformanceHistory(){
-  if(Array.isArray(window.__maxAlphaHistory)) return Promise.resolve(window.__maxAlphaHistory);
-  // The local Python server exposes the same file when this page is opened at
-  // http://127.0.0.1:8765. Never try this from a file:// asset URL.
   if(location.protocol==='http:' || location.protocol==='https:'){
-    return fetch('/performance_v4.json?t='+Date.now()).then(function(r){return r.json();});
+    return fetch('/performance_v4.json?t='+Date.now())
+      .then(function(r){return r.json();})
+      .catch(function(){
+        return Array.isArray(window.__maxAlphaHistory)?Promise.resolve(window.__maxAlphaHistory):Promise.resolve([]);
+      });
   }
+  if(Array.isArray(window.__maxAlphaHistory)) return Promise.resolve(window.__maxAlphaHistory);
   return Promise.resolve([]);
 }
 

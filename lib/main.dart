@@ -2852,6 +2852,9 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
     if (!_dashboardLoaded || !mounted) return;
     final signature = [
       dashboardData['cycle']?.toString() ?? '',
+      dashboardData['total']?.toString() ?? '',
+      dashboardData['cash']?.toString() ?? '',
+      dashboardData['ts']?.toString() ?? '',
       ((dashboardData['history'] as List?) ?? const []).length.toString(),
       ((dashboardData['positions_detail'] as List?) ?? const []).length.toString(),
       logLines.length.toString(),
@@ -2865,7 +2868,7 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
       );
       await _controller.runJavaScript('''
         (function() {
-          if ($history !== null) window.__maxAlphaHistory = $history;
+          if ($history !== null && Array.isArray($history)) window.__maxAlphaHistory = $history;
           if (typeof loadAll === 'function') loadAll();
           if (typeof loadPerformanceLog === 'function') loadPerformanceLog();
           if (typeof updateAgentStatus === 'function') updateAgentStatus();
