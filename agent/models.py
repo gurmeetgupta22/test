@@ -85,7 +85,7 @@ class Portfolio:
 
     @property
     def deployable_cash(self) -> float:
-        """Cash available to deploy â€” keeps 5% in reserve."""
+        """Cash available to deploy  keeps 5% in reserve."""
         reserve = self.total_usd * CONFIG["min_cash_reserve"]
         return max(0, self.cash_usd - reserve)
 

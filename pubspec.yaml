@@ -30,3 +30,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/dashboard_v5_bot2.html
+    - assets/app2.png

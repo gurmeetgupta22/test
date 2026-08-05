@@ -66,7 +66,7 @@ class Tier1Scanner:
                 return picked
             return TIER1_SCAN_UNIVERSE[:20]
         except Exception as e:
-            log.warning(f"NSE Tier1 scan error ({e}) â€” using fallback list")
+            log.warning(f"NSE Tier1 scan error ({e})  using fallback list")
             return TIER1_SCAN_UNIVERSE[:20]
 
     def scan_tier2(self) -> List[str]:

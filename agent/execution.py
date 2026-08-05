@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 import json
 import math
 import os
@@ -86,11 +86,12 @@ class Executor:
     SYMBOL_MAP_FILE = project_path("symbol_map.json")   # Maps ticker -> Dhan security_id
     TRADE_META_FILE = project_path("trade_meta.json")   # Persists strategy-specific stops/targets
 
-    def __init__(self):
+    def __init__(self, budget_cap: float = 0.0):
         self.client = dhanhq(
             client_id=CONFIG["dhan_client_id"],
             access_token=CONFIG["dhan_access_token"],
         )
+        self._initial_budget = budget_cap
         self._peak: Dict[str, float] = {}
         self._loss_watch: Dict[str, dict] = {}
         self._tier_map: Dict[str, int] = self._load_tier_map()
@@ -101,9 +102,11 @@ class Executor:
         self.learning = LearningEngine()
         self.alerts = AlertManager()
         mode = "PAPER-SAFE" if CONFIG["broker_paper"] else "LIVE ***"
-        log.info(f"Dhan connected Ã¢â‚¬â€ {mode}")
+        log.info(f"Dhan connected — {mode}")
+        if self._initial_budget > 0:
+            log.info(f"  Live trading budget capped at Rs {self._initial_budget:,.2f}")
         if not self._symbol_map:
-            log.warning("symbol_map.json not found or empty Ã¢â‚¬â€ order placement needs security_id mappings")
+            log.warning("symbol_map.json not found or empty — order placement needs security_id mappings")
 
     def _load_tier_map(self) -> Dict[str, int]:
         try:
@@ -253,6 +256,9 @@ class Executor:
             else: t3v += mv
 
         invested = t1v + t2v + t3v
+        if hasattr(self, "_initial_budget") and self._initial_budget > 0:
+            allowed_cash = max(0.0, self._initial_budget - invested)
+            cash_usd = min(cash_usd, allowed_cash)
         total_usd = cash_usd + invested
 
         return Portfolio(
@@ -500,7 +506,7 @@ class SimExecutor:
     """
     Persistent local simulation executor.
     Saves/loads portfolio state across bot restarts.
-    Budget is user-specified at startup â€” never exceeded.
+    Budget is user-specified at startup  never exceeded.
     """
     def __init__(self, budget: float = 1_000_000.0):
         self._budget         = budget
@@ -570,17 +576,17 @@ class SimExecutor:
                 self._order_history  = state.get("order_history", [])
                 self._loss_watch     = state.get("loss_watch", {}) if isinstance(state.get("loss_watch", {}), dict) else {}
                 self._initial_budget = budget_cap
-                log.info(f"Sim executor active â€” loaded {len(positions)} saved position(s) from previous session")
+                log.info(f"Sim executor active  loaded {len(positions)} saved position(s) from previous session")
                 return
             except Exception as e:
-                log.warning(f"Could not load portfolio state ({e}) â€” starting fresh")
+                log.warning(f"Could not load portfolio state ({e})  starting fresh")
         # Fresh start
         self._portfolio = Portfolio(
             total_usd=self._budget, cash_usd=self._budget, invested_usd=0.0,
             positions={}, open_count=0,
             tier1_value=0.0, tier2_value=0.0, tier3_value=0.0,
         )
-        log.info(f"Sim executor active â€” paper portfolio initialized with Rs{self._budget:,.0f}")
+        log.info(f"Sim executor active  paper portfolio initialized with Rs{self._budget:,.0f}")
 
     def _save_state(self):
         state = {
@@ -766,7 +772,7 @@ class SimExecutor:
             self.alerts.send("SIM BUY", f"{signal.qty}x {signal.ticker} @ Rs{signal.price:.2f} | {signal.strategy}")
             self._save_state()
             return True
-        log.warning(f"  [SIMULATOR] Budget: need Rs{cost:.0f}, have Rs{self._portfolio.cash_usd:.0f} â€” skipping")
+        log.warning(f"  [SIMULATOR] Budget: need Rs{cost:.0f}, have Rs{self._portfolio.cash_usd:.0f}  skipping")
         return False
 
     def sell(self, ticker: str, qty: int, reason: str) -> bool:

@@ -48,7 +48,7 @@ class SmartScheduler:
     def next_interval(self) -> Tuple[int, str, bool]:
         """Returns (sleep_secs, label, should_call_claude)"""
         if self.is_weekend():
-            return self._secs_to_monday(), "Weekend â€” sleeping until Mon pre-market", False
+            return self._secs_to_monday(), "Weekend  sleeping until Mon pre-market", False
         if self.is_premarket():
             today = datetime.datetime.now(IST).date()
             if self._last_pre != today:
@@ -56,12 +56,12 @@ class SmartScheduler:
                 return 0, "Pre-market scan (no Claude)", False
             return self._secs_to_open(), "Waiting for market open", False
         if self.is_power_open():
-            return CONFIG["power_open_interval"],  "Power open  â€” 5 min cycles", True
+            return CONFIG["power_open_interval"],  "Power open   5 min cycles", True
         if self.is_power_close():
-            return CONFIG["power_close_interval"], "Power close â€” 5 min cycles", True
+            return CONFIG["power_close_interval"], "Power close  5 min cycles", True
         if self.is_market_open():
-            return CONFIG["mid_session_interval"], "Mid-session â€” 15 min cycles", True
-        return self._secs_to_premarket(), "After hours â€” sleeping", False
+            return CONFIG["mid_session_interval"], "Mid-session  15 min cycles", True
+        return self._secs_to_premarket(), "After hours  sleeping", False
 
     def _secs_to_open(self):
         n = datetime.datetime.now(IST)
@@ -86,9 +86,9 @@ class SmartScheduler:
     def status(self) -> str:
         ist = datetime.datetime.now(IST)
         ts   = ist.strftime("%a %d %b %H:%M IST")
-        if self.is_weekend():     return f"{ts} â€” Weekend"
-        if self.is_power_open():  return f"{ts} â€” POWER OPEN (5-min)"
-        if self.is_power_close(): return f"{ts} â€” POWER CLOSE (5-min)"
-        if self.is_market_open(): return f"{ts} â€” Market open (15-min)"
-        if self.is_premarket():   return f"{ts} â€” Pre-market"
-        return f"{ts} â€” After hours"
+        if self.is_weekend():     return f"{ts}  Weekend"
+        if self.is_power_open():  return f"{ts}  POWER OPEN (5-min)"
+        if self.is_power_close(): return f"{ts}  POWER CLOSE (5-min)"
+        if self.is_market_open(): return f"{ts}  Market open (15-min)"
+        if self.is_premarket():   return f"{ts}  Pre-market"
+        return f"{ts}  After hours"

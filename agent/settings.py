@@ -64,7 +64,7 @@ CONFIG = {
     "claude_model":  os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
     "local_council_only": os.getenv("LOCAL_COUNCIL_ONLY", "false").lower() == "true",
 
-    # â”€â”€ DYNAMIC CAPITAL â€” all sizing is % of live account, never hardcoded â”€â”€
+    # â”€â”€ DYNAMIC CAPITAL  all sizing is % of live account, never hardcoded â”€â”€
     "trading_budget_min":   float(os.getenv("TRADING_BUDGET_MIN", "1000")),
     "trading_budget_max":   float(os.getenv("TRADING_BUDGET_MAX", "50000")),
     "trading_budget_default": float(os.getenv("TRADING_BUDGET", os.getenv("TRADING_BUDGET_DEFAULT", "50000"))),

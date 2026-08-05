@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import traceback
-import threading
 from typing import List, Optional, Tuple
 
 try:
@@ -14,11 +13,9 @@ try:
     from .regime import RegimeEngine
     from .reporting import SignalExporter, Tracker
     from .scheduler import SmartScheduler
-    from .settings import CONFIG, PORTFOLIO_STATE_FILE, TIER2_UNIVERSE, TIER3_UNIVERSE, log
+    from .settings import CONFIG, PORTFOLIO_STATE_FILE, TIER2_UNIVERSE, TIER3_UNIVERSE, log, project_path
     from .exit_manager import ExitManager
 except ImportError:
-    if __package__:
-        raise
     from alpha import AlphaEngine, Tier1Scanner
     from council import CouncilOfFive
     from execution import Executor, SimExecutor
@@ -26,52 +23,48 @@ except ImportError:
     from regime import RegimeEngine
     from reporting import SignalExporter, Tracker
     from scheduler import SmartScheduler
-    from settings import CONFIG, PORTFOLIO_STATE_FILE, TIER2_UNIVERSE, TIER3_UNIVERSE, log
+    from settings import CONFIG, PORTFOLIO_STATE_FILE, TIER2_UNIVERSE, TIER3_UNIVERSE, log, project_path
     from exit_manager import ExitManager
 
 class MaxAlphaV4:
 
-    def __init__(self, mode: str = "full", budget: float = 1_000_000.0,
-                 run_mode: str = "discover", stop_event: Optional[threading.Event] = None):
+    def __init__(self, mode: str = "full", budget: float = 1_000_000.0, run_mode: str = "discover", stop_event=None):
         self.bot_mode        = mode
         self.run_mode        = run_mode
+        self.stop_event      = stop_event
         self.scanner         = Tier1Scanner()
         self.alpha           = AlphaEngine()
         self.regime_e        = RegimeEngine()
         self.council         = CouncilOfFive()
         self.execution_mode  = CONFIG["execution_mode"]
-        self.executor        = SimExecutor(budget=budget) if self.execution_mode == "signals_only" else Executor()
+        is_live = (self.execution_mode == "broker" and not CONFIG["broker_paper"])
+        self.executor        = SimExecutor(budget=budget) if self.execution_mode == "signals_only" else Executor(budget_cap=budget if is_live else 0.0)
         self.signal_exporter = SignalExporter(CONFIG["paper_signal_file"])
         self.scheduler       = SmartScheduler()
         self.tracker         = Tracker()
         self.exit_manager    = ExitManager()  # Smart exit system
         self._regime_cache: Optional[MarketRegime] = None
         self._regime_ts      = 0.0
-        # Optional only: desktop launches keep their original endless-loop
-        # behaviour. The mobile foreground service supplies this event so a
-        # user can deliberately stop the bot from the app.
-        self._stop_event = stop_event
-
-    def stop(self):
-        if self._stop_event:
-            self._stop_event.set()
 
     def run(self):
-        log.info("MAX ALPHA v4 â€” Three-Tier Regime-Aware Agent")
+        log.info("MAX ALPHA v4 — Three-Tier Regime-Aware Agent")
         log.info(f"Mode: {'PAPER' if CONFIG['broker_paper'] else 'LIVE'}")
         log.info(f"Execution mode: {self.execution_mode}")
         log.info(f"Run mode: {self.run_mode}")
         log.info("Tiers: NSE momentum smallcaps | NSE midcaps | NSE bluechip/ETF")
         log.info(f"Trade goal: up to {CONFIG['desired_daily_trades']} quality trades/day, never forced")
-        log.info("Capital: Dynamic â€” reads live Dhan balance every cycle")
+        log.info("Capital: Dynamic — reads live Dhan balance every cycle")
 
-        while not (self._stop_event and self._stop_event.is_set()):
+        while True:
+            if self.stop_event and self.stop_event.is_set():
+                log.info("Stop event set — shutting down engine cleanly.")
+                break
             try:
                 secs, label, call_claude = self.scheduler.next_interval()
                 log.info(f"[{self.scheduler.status()}] {label}")
 
                 if not call_claude and secs > 60:
-                    # Sleep â€” but still monitor existing positions
+                    # Sleep  but still monitor existing positions
                     self._monitor_positions_only()
                     self._chunked_sleep(secs)
                     continue
@@ -99,9 +92,9 @@ class MaxAlphaV4:
     def _chunked_sleep(self, secs: int):
         slept = 0
         while slept < secs:
-            if self._stop_event and self._stop_event.is_set():
-                return
-            chunk = min(60, secs - slept)
+            if self.stop_event and self.stop_event.is_set():
+                break
+            chunk = min(5, secs - slept)
             time.sleep(chunk)
             slept += chunk
 
@@ -134,7 +127,7 @@ class MaxAlphaV4:
         regime = self._regime_cache
 
         if not call_claude:
-            log.info("  Pre-market scan complete â€” skipping Claude (market not open)")
+            log.info("  Pre-market scan complete  skipping Claude (market not open)")
             self.tracker.record(portfolio, regime, 0, self.executor)
             self.tracker.print_dashboard(portfolio, regime)
             return
@@ -160,7 +153,7 @@ class MaxAlphaV4:
 
         all_candidates: List[ScoredStock] = []
 
-        # Tier 1 â€” only if regime allows it
+        # Tier 1  only if regime allows it
         if regime.state != "CRASH" and regime.allocation["tier1"] > 0:
             log.info("  [T1] Scanning NSE Tier1 momentum basket...")
             t1_tickers = self.scanner.scan()
@@ -168,9 +161,9 @@ class MaxAlphaV4:
             log.info(f"  [T1] {len(t1_candidates)} candidates (alpha >= 0.75)")
             all_candidates.extend(t1_candidates[:10])
         else:
-            log.info(f"  [T1] Skipped â€” regime {regime.state} suppresses high-beta smallcaps")
+            log.info(f"  [T1] Skipped  regime {regime.state} suppresses high-beta smallcaps")
 
-        # Tier 2 â€” small caps
+        # Tier 2  small caps
         if regime.state not in ("CRASH",) and regime.allocation["tier2"] > 0:
             log.info("  [T2] Scoring broad mid/small-cap universe...")
             t2_tickers = self.scanner.scan_tier2() if CONFIG.get("broad_market_scan", True) else []
@@ -180,7 +173,7 @@ class MaxAlphaV4:
             log.info(f"  [T2] {len(t2_candidates)} candidates (alpha >= 0.75)")
             all_candidates.extend(t2_candidates[:8])
 
-        # Tier 3 â€” blue chips & ETFs (always run)
+        # Tier 3  blue chips & ETFs (always run)
         log.info("  [T3] Scoring broad large-cap / ETF universe...")
         t3_all = self.scanner.scan_tier3() if CONFIG.get("broad_market_scan", True) else []
         curated_t3 = [t for tickers in TIER3_UNIVERSE.values() for t in tickers]
@@ -201,7 +194,7 @@ class MaxAlphaV4:
         top = all_candidates[:18]
 
         if not top:
-            log.info("  No candidates passed scoring â€” skipping Council")
+            log.info("  No candidates passed scoring  skipping Council")
             self.tracker.record(portfolio, regime, 0, self.executor)
             self.tracker.print_dashboard(portfolio, regime)
             return
@@ -244,7 +237,7 @@ class MaxAlphaV4:
                     and not is_add_to_existing
                     and portfolio.open_count + buys >= CONFIG["max_open_positions"]
                 ):
-                    log.warning(f"  Max positions reached â€” skipping {signal.ticker}")
+                    log.warning(f"  Max positions reached  skipping {signal.ticker}")
                     break
                 if signal.action == "BUY":
                     if hasattr(self.executor, "risk") and not self.executor.risk.can_open(signal, portfolio):
@@ -258,7 +251,7 @@ class MaxAlphaV4:
                             sells += 1
             log.info(f"  Executed: {buys} buys, {sells} sells")
         elif not market_is_open:
-            log.info("  Market closed â€” signals queued for next open")
+            log.info("  Market closed  signals queued for next open")
 
         # â”€â”€ 7. Record & dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         portfolio = self.executor.get_portfolio()
@@ -379,21 +372,6 @@ class MaxAlphaV4:
     def _check_stale_exits(self, portfolio):
         """Exit positions that haven't moved after too many days, freeing slots for fresh signals."""
         return
-        # Max days to hold a position with P&L below 1% (winners are exempt)
-        MAX_HOLD_DAYS = {1: 10, 2: 14, 3: 21}
-        if not portfolio.positions:
-            return
-        for ticker, pos in list(portfolio.positions.items()):
-            days = self._calculate_days_held(pos.buy_date if hasattr(pos, "buy_date") else None)
-            if days == 0:
-                continue
-            pnl_pct = (pos.current_price - pos.avg_cost) / pos.avg_cost
-            max_days = MAX_HOLD_DAYS.get(pos.tier, 14)
-            if days >= max_days and pnl_pct < 0.01:
-                log.warning(
-                    f"  STALE EXIT {ticker}: held {days}d P&L {pnl_pct:+.1%} — freeing slot"
-                )
-                self.executor.sell(ticker, pos.qty, f"STALE_POSITION {days}d {pnl_pct:+.1%}")
 
 def check():
     allowed_modes = {"broker", "signals_only"}
@@ -412,10 +390,54 @@ def check():
         print("\nMissing API keys:")
         for m in missing: print(f"  set {m}=your_key_here")
         sys.exit(1)
-    if CONFIG["execution_mode"] == "broker" and not CONFIG["broker_paper"]:
-        print("\nLIVE TRADING MODE â€” real money.")
-        if input("Type YES to confirm: ").strip().upper() != "YES":
-            sys.exit(0)
+
+LIVE_BUDGET_STATE_FILE = project_path("live_budget_state.json")
+
+def _load_live_budget_state() -> dict:
+    try:
+        if os.path.exists(LIVE_BUDGET_STATE_FILE):
+            with open(LIVE_BUDGET_STATE_FILE, "r", encoding="utf-8-sig") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"cap": 0.0}
+
+def _save_live_budget_state(cap: float):
+    try:
+        with open(LIVE_BUDGET_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"cap": round(cap, 2)}, f)
+    except Exception:
+        pass
+
+def _get_dhan_balance() -> float:
+    try:
+        from dotenv import load_dotenv
+        from dhanhq import dhanhq
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        load_dotenv(os.path.join(project_root, ".env"), override=True)
+
+        client_id = os.getenv("DHAN_CLIENT_ID", CONFIG.get("dhan_client_id", ""))
+        access_token = os.getenv("DHAN_ACCESS_TOKEN", CONFIG.get("dhan_access_token", ""))
+
+        if not client_id or not access_token or client_id.startswith("YOUR") or access_token.startswith("YOUR"):
+            print("  Warning: Dhan credentials missing or default in .env")
+            return 0.0
+
+        client = dhanhq(client_id=client_id, access_token=access_token)
+        resp = client.get_fund_limits()
+        funds = resp.get("data", resp) if isinstance(resp, dict) else {}
+        balance = float(
+            funds.get("availabelBalance")
+            or funds.get("availableBalance")
+            or funds.get("cashBalance")
+            or funds.get("withdrawableBalance")
+            or 0.0
+        )
+        return balance
+    except Exception as e:
+        print(f"  Warning: could not fetch Dhan balance ({e})")
+        return 0.0
 
 def _saved_position_count() -> int:
     try:
@@ -427,41 +449,119 @@ def _saved_position_count() -> int:
     except Exception:
         return 0
 
-def _saved_initial_budget(default_budget: float) -> float:
+def _saved_portfolio_total() -> float:
     try:
         if not os.path.exists(PORTFOLIO_STATE_FILE):
-            return default_budget
+            return 0.0
         with open(PORTFOLIO_STATE_FILE, "r", encoding="utf-8-sig") as f:
             state = json.load(f)
-        return float(state.get("initial_budget") or default_budget)
+        cash = float(state.get("cash_usd") or 0.0)
+        invested = sum(
+            float(p.get("market_value") or 0.0)
+            for p in (state.get("positions") or {}).values()
+        )
+        return cash + invested
     except Exception:
-        return default_budget
+        return 0.0
 
 def startup_prompt() -> Tuple[str, float]:
-    min_budget = float(CONFIG.get("trading_budget_min", 1000))
-    max_budget = float(CONFIG.get("trading_budget_max", 50000))
-    default_budget = float(CONFIG.get("trading_budget_default", max_budget))
-    default_budget = max(min_budget, min(max_budget, default_budget))
+    is_live = (CONFIG["execution_mode"] == "broker" and not CONFIG["broker_paper"])
     run_mode = "discover"
+
     if not sys.stdin.isatty():
-        return "discover", default_budget
+        if is_live:
+            live_state = _load_live_budget_state()
+            prev_cap = float(live_state.get("cap") or 0.0)
+            if prev_cap > 0:
+                return run_mode, prev_cap
+            dhan_bal = _get_dhan_balance()
+            if dhan_bal > 0:
+                _save_live_budget_state(dhan_bal)
+                return run_mode, dhan_bal
+        prev_total = _saved_portfolio_total()
+        if prev_total > 0:
+            return run_mode, prev_total
+        return run_mode, float(CONFIG.get("trading_budget_default", CONFIG.get("trading_budget_max", 50000)))
 
     saved_positions = _saved_position_count()
     print("\nMax Alpha startup")
     print(f"Saved bot positions found: {saved_positions}")
     print("Combined mode: manage existing holdings first, then scan for new buys.")
 
-    budget = default_budget
+    if is_live:
+        print("\n  LIVE TRADING MODE — real money")
+        print("  Fetching your Dhan wallet balance...")
+        dhan_balance = _get_dhan_balance()
+        live_state = _load_live_budget_state()
+        prev_cap = float(live_state.get("cap") or 0.0)
+
+        if dhan_balance > 0:
+            print(f"  Current Dhan wallet balance: Rs {dhan_balance:,.2f}")
+        else:
+            print("  Could not fetch Dhan balance — check credentials and token.")
+
+        if prev_cap > 0:
+            print(f"  Previously allocated to bot:  Rs {prev_cap:,.2f}")
+            prompt = f"  How much to ADD to bot allocation? (empty = keep Rs {prev_cap:,.2f}): "
+        else:
+            prompt = (
+                f"  How much to allocate to bot? (empty = use full Rs {dhan_balance:,.2f}): "
+                if dhan_balance > 0 else
+                "  How much to allocate to bot (in rupees): "
+            )
+
+        raw = input(prompt).strip()
+
+        if not raw:
+            cap = prev_cap if prev_cap > 0 else dhan_balance
+        else:
+            try:
+                added = float(raw.replace(",", ""))
+            except ValueError:
+                print("  Invalid amount; keeping previous allocation.")
+                added = 0.0
+            cap = prev_cap + added
+
+        if dhan_balance > 0 and cap > dhan_balance:
+            print(
+                f"  Not enough wallet balance. "
+                f"Maximum wallet balance is Rs {dhan_balance:,.2f}. "
+                f"Starting with Rs {dhan_balance:,.2f}."
+            )
+            cap = dhan_balance
+
+        if cap <= 0:
+            cap = dhan_balance if dhan_balance > 0 else float(CONFIG.get("trading_budget_default", 50000))
+
+        _save_live_budget_state(cap)
+        print(f"  Bot allocated: Rs {cap:,.2f} from your Dhan wallet.")
+        return run_mode, cap
+
+    min_budget = float(CONFIG.get("trading_budget_min", 1000))
+    max_budget = float(CONFIG.get("trading_budget_max", 50000))
+
+    prev_total = _saved_portfolio_total()
+    if prev_total > 0:
+        default_budget = prev_total
+        default_label = f"Rs {prev_total:,.2f} (previous portfolio balance)"
+    else:
+        default_budget = float(CONFIG.get("trading_budget_default", max_budget))
+        default_label = f"Rs {default_budget:,.0f}"
+
     raw = input(
-        f"Total trading wallet cap in rupees [default Rs{default_budget:,.0f}; "
-        f"allowed Rs{min_budget:,.0f}-Rs{max_budget:,.0f}; enter full total, not added cash]: "
+        f"Total trading wallet cap in rupees [default {default_label}; "
+        f"allowed Rs {min_budget:,.0f}-Rs {max_budget:,.0f}]: "
     ).strip()
+
     if raw:
         try:
             budget = float(raw.replace(",", ""))
         except ValueError:
             print("Invalid amount; using default.")
             budget = default_budget
+    else:
+        budget = default_budget
+
     budget = max(min_budget, min(max_budget, budget))
-    print(f"Wallet cap set to Rs{budget:,.2f}. This is the total cap, not an added deposit.")
+    print(f"Wallet cap set to Rs {budget:,.2f}.")
     return run_mode, budget

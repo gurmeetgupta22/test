@@ -147,5 +147,5 @@ class RegimeEngine:
             spy_trend="sideways", spy_rsi=50.0,
             vix_level="normal", breadth=0.5, momentum=0.0,
             allocation=REGIME_ALLOCATIONS["NEUTRAL"],
-            reasoning="Default NEUTRAL â€” NIFTY data unavailable"
+            reasoning="Default NEUTRAL  NIFTY data unavailable"
         )

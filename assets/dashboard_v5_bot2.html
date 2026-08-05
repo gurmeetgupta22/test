@@ -1,26 +1,37 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Max Alpha v4 â€” Dashboard</title>
+<title>Max Alpha v4  Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
 :root{
-  --bg:#07111f;--s1:#0b1729;--s2:#10233d;--s3:#15365f;
-  --b1:rgba(148,185,255,0.09);--b2:rgba(148,185,255,0.15);--b3:rgba(249,115,22,0.28);
+  --bg:#000000;--s1:#0c0c0c;--s2:#121212;--s3:#181818;
+  --b1:rgba(255,255,255,0.08);--b2:rgba(255,255,255,0.14);--b3:rgba(255,214,0,0.28);
   --tx:#edf5ff;--mu:#6f88aa;--mu2:#9fb4d0;
   --gn:#22c55e;--gd:rgba(34,197,94,0.14);
   --rd:#ef4444;--rdd:rgba(239,68,68,0.14);
-  --am:#f97316;--ad:rgba(249,115,22,0.15);
+  --am:#ffd600;--ad:rgba(255,214,0,0.15);
   --bl:#3b82f6;--bd:rgba(59,130,246,0.14);
-  --pu:#fb923c;--pd:rgba(251,146,60,0.14);
+  --pu:#ffd600;--pd:rgba(255,214,0,0.14);
   --cy:#38bdf8;--cd:rgba(56,189,248,0.13);
   --mn:'Space Mono',monospace;--sn:'DM Sans',sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;min-height:100vh}
+body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;min-height:100vh;max-width:100vw;overflow-x:hidden}
+@media (max-width:768px){
+  html,body{max-width:100vw!important;overflow-x:hidden!important;width:100%!important}
+  .main{padding:10px!important;max-width:100vw!important;overflow-x:hidden!important;width:100%!important}
+  .g2,.g3,.g4,.g5,.g6{grid-template-columns:1fr!important;gap:10px!important}
+  .brief{grid-template-columns:1fr!important;gap:10px!important;padding:12px!important}
+  .regime-banner{padding:12px!important;gap:10px!important;flex-direction:column!important;align-items:flex-start!important}
+  .panel{padding:12px!important;border-radius:10px!important}
+  .tbl-wrap,table{max-width:100%!important;overflow-x:auto!important;display:block!important;width:100%!important}
+  .alloc-bars{width:100%!important;min-width:0!important;flex-direction:column!important;align-items:stretch!important}
+  .mc-val{font-size:17px!important}
+}
 
 /* LOGIN */
 #ls{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999}
@@ -141,7 +152,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
 .tbl th{font-size:10px;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;padding:5px 0;text-align:left;border-bottom:1px solid var(--b1)}
 .tbl td{padding:8px 0;border-bottom:1px solid var(--b1);font-size:12px}
 .tbl tr:last-child td{border-bottom:none}
-.scrollbox{max-height:360px;overflow-y:auto;overflow-x:auto;padding-right:4px}
+  .scrollbox{max-height:360px;overflow-y:auto;overflow-x:auto;padding-right:4px;-webkit-overflow-scrolling:touch}
 .scrollbox .tbl{min-width:720px}
 .scrollbox::-webkit-scrollbar{width:8px;height:8px}
 .scrollbox::-webkit-scrollbar-thumb{background:var(--b1);border-radius:8px}
@@ -186,7 +197,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
 @media(max-width:1100px){.g5,.g6{grid-template-columns:repeat(3,1fr)}.g2,.g3,.g4{grid-template-columns:1fr 1fr}.cgrid{grid-template-columns:1fr}}
 @media(max-width:1100px){.brief{grid-template-columns:1fr 1fr}}
 @media(max-width:700px){
-  body{font-size:13px;overflow-x:hidden}
+  body{font-size:13px;overflow-x:hidden;overflow-wrap:anywhere}
   .hdr{padding:10px 12px;gap:10px;align-items:flex-start}
   .hdr>div:last-child{flex-wrap:wrap;justify-content:flex-end;gap:5px}
   .hdr .st,#htime,.hdr .ibtn{display:none}
@@ -202,10 +213,19 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
   .mobile-section-label{margin:2px 3px 7px}
   .alloc-bars{flex-basis:100%;min-width:0}
   .ch{height:165px}.ch-sm{height:140px}.ch-xs{height:120px}
-  .scrollbox{max-height:280px}.scrollbox .tbl{min-width:620px}
+  .scrollbox{max-height:260px;overflow-y:auto;overflow-x:auto;padding-right:4px;-webkit-overflow-scrolling:touch}.scrollbox .tbl{min-width:0}
   .cgrid{grid-template-columns:1fr;gap:9px}.cc{padding:12px}
-  .rw{align-items:flex-start}.rstats{flex:1}
-  .pt{padding:4px 8px;font-size:10px}
+  .rw{flex-direction:column;align-items:center;gap:12px}.rstats{width:100%;min-width:0}.rst{font-size:12px}
+  .pt,.ibtn{min-height:32px;padding:6px 9px;font-size:10px}
+  /* Wide broker tables become readable, touch-friendly trade cards. */
+  #pos-body .tbl,#ord-body .tbl,#pt-body .tbl{display:block;width:100%}
+  #pos-body .tbl thead,#ord-body .tbl thead,#pt-body .tbl thead{display:none}
+  #pos-body .tbl tbody,#ord-body .tbl tbody,#pt-body .tbl tbody{display:block}
+  #pos-body .tbl tr,#ord-body .tbl tr,#pt-body .tbl tr{display:block;margin:0 0 10px;padding:10px;background:var(--s2);border:1px solid var(--b1);border-radius:8px}
+  #pos-body .tbl td,#ord-body .tbl td,#pt-body .tbl td{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--b1);text-align:right;min-width:0;word-break:break-word}
+  #pos-body .tbl td:last-child,#ord-body .tbl td:last-child,#pt-body .tbl td:last-child{border-bottom:0}
+  #pos-body .tbl td::before,#ord-body .tbl td::before,#pt-body .tbl td::before{content:attr(data-label);color:var(--mu);font-size:10px;font-weight:700;letter-spacing:.06em;text-align:left;text-transform:uppercase;flex:0 0 38%;max-width:38%}
+  #pos-body .tbl td>* ,#ord-body .tbl td>* ,#pt-body .tbl td>*{min-width:0}
   .empty{padding:16px 8px}
 }
 </style>
@@ -311,21 +331,21 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
 <!-- TIER BREAKDOWN -->
 <div class="g3" style="margin-bottom:14px">
   <div class="tier-card">
-    <div class="tc-header"><div class="tc-title">Tier 1 â€” Momentum Smallcaps</div><span class="tc-badge t1b">Rs 20â€“Rs 250</span></div>
+    <div class="tc-header"><div class="tc-title">Tier 1  Momentum Smallcaps</div><span class="tc-badge t1b">Rs 20â€“Rs 250</span></div>
     <div class="tc-val" id="t1-val" style="color:var(--pu)">$--</div>
     <div class="tc-sub" id="t1-sub">-- of portfolio Â· -- positions</div>
     <div class="tc-bar"><div class="tc-fill" id="t1-bar" style="width:0%;background:var(--pu)"></div></div>
     <div style="font-size:11px;color:var(--mu2);margin-top:6px">Target regime: <span id="t1-target" style="color:var(--pu)">--%</span> Â· Capacity: <span id="t1-cap">$--</span></div>
   </div>
   <div class="tier-card">
-    <div class="tc-header"><div class="tc-title">Tier 2 â€” Midcaps</div><span class="tc-badge t2b">Rs 250â€“Rs 1,500</span></div>
+    <div class="tc-header"><div class="tc-title">Tier 2  Midcaps</div><span class="tc-badge t2b">Rs 250â€“Rs 1,500</span></div>
     <div class="tc-val" id="t2-val" style="color:var(--bl)">$--</div>
     <div class="tc-sub" id="t2-sub">-- of portfolio Â· -- positions</div>
     <div class="tc-bar"><div class="tc-fill" id="t2-bar" style="width:0%;background:var(--bl)"></div></div>
     <div style="font-size:11px;color:var(--mu2);margin-top:6px">Target regime: <span id="t2-target" style="color:var(--bl)">--%</span> Â· Capacity: <span id="t2-cap">$--</span></div>
   </div>
   <div class="tier-card">
-    <div class="tc-header"><div class="tc-title">Tier 3 â€” Blue chip / ETF</div><span class="tc-badge t3b">Rs 100+</span></div>
+    <div class="tc-header"><div class="tc-title">Tier 3  Blue chip / ETF</div><span class="tc-badge t3b">Rs 100+</span></div>
     <div class="tc-val" id="t3-val" style="color:var(--bl)">$--</div>
     <div class="tc-sub" id="t3-sub">-- of portfolio Â· -- positions</div>
     <div class="tc-bar"><div class="tc-fill" id="t3-bar" style="width:0%;background:var(--bl)"></div></div>
@@ -336,7 +356,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
 <!-- CHARTS -->
 <div class="g2">
   <div class="panel">
-    <div class="sec"><span id="pnl-title">P&L â€” today</span>
+    <div class="sec"><span id="pnl-title">P&L  today</span>
       <div class="ptog" style="gap:3px">
         <button class="pt on" id="pc-d" onclick="setPeriod('D')">D</button>
         <button class="pt" id="pc-w" onclick="setPeriod('W')">W</button>
@@ -366,7 +386,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
 <!-- P&L TABLE -->
 <div class="panel" style="margin-bottom:14px">
   <div class="sec"><span id="pt-title">P&L breakdown</span><span class="pill" id="pt-badge"></span></div>
-  <div id="pt-body"><div class="empty">No history yet â€” builds as agent runs.</div></div>
+  <div id="pt-body" class="scrollbox"><div class="empty">No history yet  builds as agent runs.</div></div>
 </div>
 
 <!-- GO LIVE -->
@@ -415,7 +435,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
   </div>
   <div class="panel">
     <div class="sec">Open positions <span class="pill" id="pos-b">0</span></div>
-    <div id="pos-body"><div class="empty">No open positions. Agent buys during NSE market hours (9:15â€“15:30 IST).</div></div>
+    <div id="pos-body" class="scrollbox"><div class="empty">No open positions. Agent buys during NSE market hours (9:15â€“15:30 IST).</div></div>
   </div>
 </div>
 
@@ -423,10 +443,10 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
 <div class="g2">
   <div class="panel">
     <div class="sec">Order history <span class="pill" id="ord-b">0</span></div>
-    <div id="ord-body"><div class="empty">No orders yet.</div></div>
+    <div id="ord-body" class="scrollbox"><div class="empty">No orders yet.</div></div>
   </div>
   <div class="panel">
-    <div class="sec">Milestones â€” INR goals</div>
+    <div class="sec">Milestones  INR goals</div>
     <div id="ms-body"><div class="empty">Connect to see milestones.</div></div>
   </div>
 </div>
@@ -473,8 +493,8 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
   <!-- Activity from performance_v4.json -->
   <div style="background:var(--s2);border-radius:8px;padding:12px;border:1px solid var(--b1)">
     <div style="font-size:11px;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Recent cycles (from performance_v4.json)</div>
-    <div id="cycle-log" style="font-family:var(--mn);font-size:11px;line-height:2;color:var(--mu2)">
-      Reads from performance_v4.json â€” updates each agent cycle
+    <div id="cycle-log" class="scrollbox" style="font-family:var(--mn);font-size:11px;line-height:2;color:var(--mu2)">
+      Reads from performance_v4.json  updates each agent cycle
     </div>
     <div style="margin-top:10px;font-size:11px;color:var(--mu);border-top:1px solid var(--b1);padding-top:8px">
       To watch the live log: open Command Prompt and run
@@ -487,7 +507,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--sn);font-size:14px;m
 
 <script>
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// CONFIGURATION â€” Edit these
+// CONFIGURATION  Edit these
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Flutter owns authentication for this mobile-only asset. The dashboard must
 // never reset the app session during section navigation.
@@ -546,7 +566,7 @@ function setPeriod(p){
     if(b){b.className='pt'+(on?' on':'');}
   });
   var lbl={D:'today',W:'this week',M:'this month'};
-  var ctitle={D:'P&L â€” today',W:'P&L â€” this week',M:'P&L â€” this month'};
+  var ctitle={D:'P&L  today',W:'P&L  this week',M:'P&L  this month'};
   document.getElementById('plbl').textContent=lbl[p];
   document.getElementById('pnl-title').textContent=ctitle[p];
   renderPnlFromHistory();
@@ -620,7 +640,7 @@ function initCharts(){
   });
 }
 
-// DHAN â€” all data comes from performance_v4.json (CORS blocks direct API calls from browser)
+// DHAN  all data comes from performance_v4.json (CORS blocks direct API calls from browser)
 function loadAll(){fetchAccount();renderPnlFromHistory();}
 
 // Android and iOS load this page from a file:// asset URL. WebView blocks
@@ -642,7 +662,7 @@ function renderOpenPositions(positions){
     body.innerHTML='<div class="empty">No open positions. Agent buys during NSE market hours (9:15-15:30 IST).</div>';
     return;
   }
-  var h='<table class="tbl"><thead><tr><th>Ticker</th><th>Qty</th><th>Buy</th><th>Now</th><th>Can sell profitably?</th><th>Profit/Loss now</th><th>Est. win</th><th>Est. sell</th><th>Verdict</th></tr></thead><tbody>';
+  var h='<div class="scrollbox"><table class="tbl"><thead><tr><th>Ticker</th><th>Qty</th><th>Buy</th><th>Now</th><th>Can sell profitably?</th><th>Profit/Loss now</th><th>Est. win</th><th>Est. sell</th><th>Verdict</th></tr></thead><tbody>';
   positions.forEach(function(p){
     var pnl=parseFloat(p.pnl_pct||0), cls=pnl>=0?'ppos':'pneg';
     var profitRs=(Number(p.current_price||0)-Number(p.buy_price||0))*Number(p.qty||0);
@@ -651,18 +671,18 @@ function renderOpenPositions(positions){
     var verdict=classifyAction(profitRs, act);
     var actCls=canSell?'osf':'osp';
     h+='<tr>';
-    h+='<td><span class="tkr t'+(p.tier||3)+'tkr">'+(p.ticker||'--')+'</span></td>';
-    h+='<td style="font-family:var(--mn);font-size:11px">'+(p.qty||0)+'</td>';
-    h+='<td style="font-family:var(--mn);font-size:11px">Rs '+Number(p.buy_price||0).toFixed(2)+'</td>';
-    h+='<td style="font-family:var(--mn);font-size:11px">Rs '+Number(p.current_price||0).toFixed(2)+'</td>';
-    h+='<td><span class="'+(canSell?'osf':'osp')+'">'+(canSell?'YES':'NO')+'</span></td>';
-    h+='<td class="'+cls+'">'+signedMoney(profitRs)+' ('+(pnl>=0?'+':'')+pnl.toFixed(2)+'%)</td>';
-    h+='<td style="font-family:var(--mn);font-size:11px;color:var(--mu2)">'+Number(p.win_probability||0).toFixed(1)+'%</td>';
-    h+='<td style="font-size:11px;color:var(--mu2)">'+(p.estimated_sell_date||'--')+'</td>';
-    h+='<td><span class="'+actCls+'">'+verdict+'</span></td>';
+    h+='<td data-label="Ticker"><span class="tkr t'+(p.tier||3)+'tkr">'+(p.ticker||'--')+'</span></td>';
+    h+='<td data-label="Quantity" style="font-family:var(--mn);font-size:11px">'+(p.qty||0)+'</td>';
+    h+='<td data-label="Buy price" style="font-family:var(--mn);font-size:11px">Rs '+Number(p.buy_price||0).toFixed(2)+'</td>';
+    h+='<td data-label="Current price" style="font-family:var(--mn);font-size:11px">Rs '+Number(p.current_price||0).toFixed(2)+'</td>';
+    h+='<td data-label="Can sell"><span class="'+(canSell?'osf':'osp')+'">'+(canSell?'YES':'NO')+'</span></td>';
+    h+='<td data-label="P/L now" class="'+cls+'">'+signedMoney(profitRs)+' ('+(pnl>=0?'+':'')+pnl.toFixed(2)+'%)</td>';
+    h+='<td data-label="Win chance" style="font-family:var(--mn);font-size:11px;color:var(--mu2)">'+Number(p.win_probability||0).toFixed(1)+'%</td>';
+    h+='<td data-label="Est. sell" style="font-size:11px;color:var(--mu2)">'+(p.estimated_sell_date||'--')+'</td>';
+    h+='<td data-label="Verdict"><span class="'+actCls+'">'+verdict+'</span></td>';
     h+='</tr>';
   });
-  body.innerHTML=h+'</tbody></table>';
+  body.innerHTML=h+'</tbody></table></div>';
 }
 
 function renderBrief(last){
@@ -729,28 +749,28 @@ function renderClosedTrades(stats){
     orders.slice().reverse().forEach(function(t){
       var side=(t.event||'--').toUpperCase(), pnl=parseFloat(t.pnl||0), cls=pnl>=0?'ppos':'pneg';
       var ts=t.ts?new Date(t.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}):'--';
-      h+='<tr><td style="color:var(--mu2);font-size:11px">'+ts+'</td><td><span class="pill">'+side+'</span></td>';
-      h+='<td><span class="tkr">'+(t.ticker||'--')+'</span></td><td>'+Number(t.qty||0)+'</td>';
-      h+='<td>Rs '+Number(t.price||0).toFixed(2)+'</td><td>Rs '+Number(t.value||0).toFixed(2)+'</td>';
-      h+='<td class="'+cls+'">'+(side==='SELL'?(pnl>=0?'+':'')+'Rs '+Math.abs(pnl).toFixed(2):'--')+'</td>';
-      h+='<td style="color:var(--mu2);font-size:11px">'+(t.reason||t.strategy||'--')+'</td></tr>';
+      h+='<tr><td data-label="Time" style="color:var(--mu2);font-size:11px">'+ts+'</td><td data-label="Side"><span class="pill">'+side+'</span></td>';
+      h+='<td data-label="Ticker"><span class="tkr">'+(t.ticker||'--')+'</span></td><td data-label="Quantity">'+Number(t.qty||0)+'</td>';
+      h+='<td data-label="Price">Rs '+Number(t.price||0).toFixed(2)+'</td><td data-label="Value">Rs '+Number(t.value||0).toFixed(2)+'</td>';
+      h+='<td data-label="P/L" class="'+cls+'">'+(side==='SELL'?(pnl>=0?'+':'')+'Rs '+Math.abs(pnl).toFixed(2):'--')+'</td>';
+      h+='<td data-label="Reason" style="color:var(--mu2);font-size:11px">'+(t.reason||t.strategy||'--')+'</td></tr>';
     });
     document.getElementById('ord-body').innerHTML=h+'</tbody></table></div>';
   } else {
     var h='<div class="scrollbox"><table class="tbl"><thead><tr><th>Ticker</th><th>Qty</th><th>Buy</th><th>Sell</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
     trades.slice().reverse().forEach(function(t){
       var pnl=parseFloat(t.pnl||0), cls=pnl>=0?'ppos':'pneg';
-      h+='<tr><td><span class="tkr">'+(t.ticker||'--')+'</span></td><td>'+Number(t.qty||0)+'</td>';
-      h+='<td>Rs '+Number(t.buy_price||0).toFixed(2)+'</td><td>Rs '+Number(t.sell_price||0).toFixed(2)+'</td>';
-      h+='<td class="'+cls+'">'+(pnl>=0?'+':'')+'Rs '+Math.abs(pnl).toFixed(2)+'</td>';
-      h+='<td style="color:var(--mu2);font-size:11px">'+(t.reason||'--')+'</td></tr>';
+      h+='<tr><td data-label="Ticker"><span class="tkr">'+(t.ticker||'--')+'</span></td><td data-label="Quantity">'+Number(t.qty||0)+'</td>';
+      h+='<td data-label="Buy price">Rs '+Number(t.buy_price||0).toFixed(2)+'</td><td data-label="Sell price">Rs '+Number(t.sell_price||0).toFixed(2)+'</td>';
+      h+='<td data-label="P/L" class="'+cls+'">'+(pnl>=0?'+':'')+'Rs '+Math.abs(pnl).toFixed(2)+'</td>';
+      h+='<td data-label="Reason" style="color:var(--mu2);font-size:11px">'+(t.reason||'--')+'</td></tr>';
     });
     document.getElementById('ord-body').innerHTML=h+'</tbody></table></div>';
   }
   updateGoLive(wr,total);
 }
 
-// ACCOUNT â€” read from performance_v4.json (Dhan agent writes this each cycle)
+// ACCOUNT  read from performance_v4.json (Dhan agent writes this each cycle)
 function fetchAccount(){
   readPerformanceHistory().then(function(data){
     if(!Array.isArray(data)||data.length===0){
@@ -780,7 +800,7 @@ function fetchAccount(){
     });
     var avgWinChance=positions.length?winProbSum/positions.length:0;
 
-    document.getElementById('stx').textContent='Dhan connected â€” cycle #'+(last.cycle||'?');
+    document.getElementById('stx').textContent='Dhan connected  cycle #'+(last.cycle||'?');
     document.getElementById('m-aud').textContent='Rs '+inr.toFixed(2);
     document.getElementById('m-usd').textContent='Rs '+cashUSD.toFixed(2)+' cash + Rs '+invested.toFixed(2)+' stocks';
     var ap=document.getElementById('m-ap');
@@ -825,7 +845,7 @@ function fetchAccount(){
     updateAgentStatus();
     updateGoLive();
   }).catch(function(){
-    document.getElementById('stx').textContent='performance_v4.json not found â€” run agent first';
+    document.getElementById('stx').textContent='performance_v4.json not found  run agent first';
     document.getElementById('alp-status').textContent='NO DATA';
     document.getElementById('alp-status').style.color='var(--rd)';
     document.getElementById('alp-sub').textContent='Run trader_v4.py to generate data';
@@ -834,7 +854,7 @@ function fetchAccount(){
 
 // REGIME from performance_v4.json (reads last entry)
 function loadRegimeFromLog(){
-  // Try to fetch the local performance file â€” only works if served via local server
+  // Try to fetch the local performance file  only works if served via local server
   // Otherwise use the last known values and update when available
   readPerformanceHistory().then(function(data){
     if(!Array.isArray(data)||data.length===0)return;
@@ -850,7 +870,7 @@ function loadRegimeFromLog(){
     regimeData={state:regime,t1:a.t1,t2:a.t2,t3:a.t3,score:score};
     updateRegimeBanner(regime,score,a,t1usd,t2usd,t3usd,last.total_usd||totalUSD);
   }).catch(function(){
-    // File not accessible via browser (normal) â€” show regime as unknown
+    // File not accessible via browser (normal)  show regime as unknown
     updateRegimeBanner('NEUTRAL',0.5,{t1:.35,t2:.40,t3:.25},0,0,0,totalUSD);
   });
 }
@@ -904,7 +924,7 @@ function updateRegimeBanner(regime,score,alloc,t1v,t2v,t3v,total){
   }
 }
 
-// WIN RATE â€” calculated from performance_v4.json cycle signals
+// WIN RATE  calculated from performance_v4.json cycle signals
 function updateWinRate(data){
   if(!Array.isArray(data)||data.length===0){
     wins=0;losses=0;
@@ -938,9 +958,9 @@ function updateWinRate(data){
   document.getElementById('rsw').textContent=w;
   document.getElementById('rsl2').textContent=l;
   document.getElementById('rst').textContent=tot;
-  document.getElementById('raw').textContent='â€”';
-  document.getElementById('ral').textContent='â€”';
-  document.getElementById('rpf').textContent='â€”';
+  document.getElementById('raw').textContent='';
+  document.getElementById('ral').textContent='';
+  document.getElementById('rpf').textContent='';
   updateGoLive(wr,tot);
 }
 
@@ -983,7 +1003,7 @@ function renderPnlFromHistory(){
     return;
   }
   var h=getHistory();
-  if(h.length<2){document.getElementById('pt-body').innerHTML='<div class="empty">No history yet â€” builds as agent runs.</div>';if(pnlCh){pnlCh.data.labels=[];pnlCh.data.datasets[0].data=[];pnlCh.update();}return;}
+  if(h.length<2){document.getElementById('pt-body').innerHTML='<div class="empty">No history yet  builds as agent runs.</div>';if(pnlCh){pnlCh.data.labels=[];pnlCh.data.datasets[0].data=[];pnlCh.update();}return;}
   var now=new Date(),labels=[],values=[],rows=[];
   if(period==='D'){
     var td=now.toLocaleDateString('en-AU');
@@ -1048,7 +1068,7 @@ function updateGoLive(wr,tot){
   var wt=document.getElementById('wr-t');
   if(tot<10){wt.textContent='Need '+(10-tot)+' more trades';wt.className='ctag tw';document.getElementById('wr-d').textContent=tot+'/10 minimum trades done';}
   else if(wrPass){wt.textContent='PASS';wt.className='ctag tp';document.getElementById('wr-d').textContent=wins+' wins from '+tot+' trades';}
-  else{wt.textContent='FAIL â€” need 50%+';wt.className='ctag tf';document.getElementById('wr-d').textContent='Win rate '+wr.toFixed(1)+'% â€” below target';}
+  else{wt.textContent='FAIL  need 50%+';wt.className='ctag tf';document.getElementById('wr-d').textContent='Win rate '+wr.toFixed(1)+'%  below target';}
   var dv=document.getElementById('dd-v');
   dv.textContent=maxDD>0?maxDD.toFixed(1)+'%':'N/A';
   dv.style.color=ddPass?'var(--gn)':maxDD===0?'var(--mu)':'var(--rd)';
@@ -1056,12 +1076,12 @@ function updateGoLive(wr,tot){
   document.getElementById('dd-b').style.background=ddPass?'var(--gn)':maxDD<15?'var(--am)':'var(--rd)';
   var dt=document.getElementById('dd-t');
   if(maxDD===0){dt.textContent='Calculating...';dt.className='ctag tw';}
-  else if(ddPass){dt.textContent='PASS';dt.className='ctag tp';document.getElementById('dd-d').textContent='Max drop: '+maxDD.toFixed(1)+'% â€” within safe limit';}
-  else{dt.textContent='FAIL â€” too high';dt.className='ctag tf';document.getElementById('dd-d').textContent='Dropped '+maxDD.toFixed(1)+'% from peak';}
+  else if(ddPass){dt.textContent='PASS';dt.className='ctag tp';document.getElementById('dd-d').textContent='Max drop: '+maxDD.toFixed(1)+'%  within safe limit';}
+  else{dt.textContent='FAIL  too high';dt.className='ctag tf';document.getElementById('dd-d').textContent='Dropped '+maxDD.toFixed(1)+'% from peak';}
   var v=document.getElementById('verdict');
-  if(tot<10){v.textContent='Need at least 10 closed trades. Keep paper trading â€” '+tot+'/10 done.';v.className='verdict vw';}
-  else if(wrPass&&ddPass){v.textContent='READY TO GO LIVE â€” Win rate '+wr.toFixed(1)+'% and drawdown '+maxDD.toFixed(1)+'% both pass.';v.className='verdict vr';}
-  else{v.textContent='NOT READY â€” '+(!wrPass?'Win rate '+wr.toFixed(1)+'% below 50%. ':'')+(!ddPass?'Drawdown '+maxDD.toFixed(1)+'% too high.':'');v.className='verdict vn';}
+  if(tot<10){v.textContent='Need at least 10 closed trades. Keep paper trading  '+tot+'/10 done.';v.className='verdict vw';}
+  else if(wrPass&&ddPass){v.textContent='READY TO GO LIVE  Win rate '+wr.toFixed(1)+'% and drawdown '+maxDD.toFixed(1)+'% both pass.';v.className='verdict vr';}
+  else{v.textContent='NOT READY  '+(!wrPass?'Win rate '+wr.toFixed(1)+'% below 50%. ':'')+(!ddPass?'Drawdown '+maxDD.toFixed(1)+'% too high.':'');v.className='verdict vn';}
 }
 
 // MILESTONES
@@ -1100,11 +1120,11 @@ function updateAgentStatus() {
   } else if (isPowerOpen) {
     mktEl.textContent='POWER OPEN';
     mktEl.style.color='var(--gn)';
-    mktNext.textContent='5-min cycles â€” most volatile';
+    mktNext.textContent='5-min cycles  most volatile';
   } else if (isPowerClose) {
     mktEl.textContent='POWER CLOSE';
     mktEl.style.color='var(--am)';
-    mktNext.textContent='5-min cycles â€” power hour';
+    mktNext.textContent='5-min cycles  power hour';
   } else if (isOpen) {
     mktEl.textContent='MARKET OPEN';
     mktEl.style.color='var(--gn)';
@@ -1126,7 +1146,7 @@ function updateAgentStatus() {
 
   if (isWeekend) {
     doingEl.innerHTML =
-      '<span style="color:var(--mu2)">Weekend â€” agent sleeping.</span> ' +
+      '<span style="color:var(--mu2)">Weekend  agent sleeping.</span> ' +
       'The smart scheduler has paused all activity. ' +
       'No Claude API calls are being made. No Dhan orders. Your money is safe. ' +
       'The watchdog is still running and will alert your phone if anything goes wrong.';
@@ -1136,7 +1156,7 @@ function updateAgentStatus() {
     badge.style.borderColor='var(--b1)';
   } else if (!isOpen && !isPremarket) {
     doingEl.innerHTML =
-      '<span style="color:var(--am)">After hours â€” agent sleeping until market opens.</span> ' +
+      '<span style="color:var(--am)">After hours  agent sleeping until market opens.</span> ' +
       'Market is closed. Agent wakes at 9:00 AM IST for pre-market scan, ' +
       'then begins active cycles from 9:15 AM. ' +
       'Chart-health and variable-profit monitoring continues on any open positions.';
@@ -1148,7 +1168,7 @@ function updateAgentStatus() {
     doingEl.innerHTML =
       '<span style="color:var(--bl)">Pre-market scan running.</span> ' +
       'Agent is scanning for stocks that have gapped up significantly before market open. ' +
-      'No trades yet â€” waiting for 9:15 AM IST when the market opens. ' +
+      'No trades yet  waiting for 9:15 AM IST when the market opens. ' +
       'Gap-and-go candidates are being identified for the opening bell.';
     badge.textContent='PRE-MARKET SCAN';
     badge.style.background='var(--bd)';
@@ -1156,18 +1176,18 @@ function updateAgentStatus() {
     badge.style.borderColor='rgba(59,130,246,.25)';
   } else if (isPowerOpen) {
     doingEl.innerHTML =
-      '<span style="color:var(--bl)">ACTIVE â€” Power open session.</span> ' +
+      '<span style="color:var(--bl)">ACTIVE  Power open session.</span> ' +
       'This is the most volatile 90 minutes of the trading day. Agent is running ' +
       '5-minute cycles: scanning Finviz for volume spikes, scoring stocks across ' +
       'all 3 tiers, asking Claude AI Council of Five to vote, and executing trades ' +
-      'via Dhan. Check your Dhan account â€” trades may be happening right now.';
+      'via Dhan. Check your Dhan account  trades may be happening right now.';
     badge.textContent='TRADING ACTIVE';
     badge.style.background='var(--bd)';
     badge.style.color='var(--bl)';
     badge.style.borderColor='rgba(59,130,246,.3)';
   } else if (isPowerClose) {
     doingEl.innerHTML =
-      '<span style="color:var(--am)">ACTIVE â€” Power hour close.</span> ' +
+      '<span style="color:var(--am)">ACTIVE  Power hour close.</span> ' +
       'Final 30 minutes before market closes (3:30 PM IST). ' +
       'Agent running 5-minute cycles. May be protecting profit or exiting only when ' +
       'chart health breaks down.';
@@ -1177,7 +1197,7 @@ function updateAgentStatus() {
     badge.style.borderColor='rgba(249,115,22,.3)';
   } else {
     doingEl.innerHTML =
-      '<span style="color:var(--bl)">ACTIVE â€” Mid-session trading.</span> ' +
+      '<span style="color:var(--bl)">ACTIVE  Mid-session trading.</span> ' +
       'Agent running 15-minute cycles. Each cycle: scans 30+ stocks across ' +
       'Tier 1 (smallcap momentum), Tier 2 (midcap), Tier 3 (blue chip/ETF), ' +
       'scores them with 8 alpha signals, and Claude AI decides whether to buy or sell. ' +
@@ -1195,7 +1215,7 @@ function updateAgentStatus() {
     alpEl.textContent = 'CONNECTED';
     alpEl.style.color = 'var(--gn)';
     alpSub.textContent = (totalUSD > 0 ? 'Rs ' + totalUSD.toFixed(0) + ' INR via Dhan' : 'reading performance_v4.json');
-    seen.textContent = 'Dhan data â€” updated ' + new Date().toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit'});
+    seen.textContent = 'Dhan data  updated ' + new Date().toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit'});
   }
 
   // Cycles today from performance_v4.json
@@ -1227,9 +1247,9 @@ function loadPerformanceLog() {
         var lastTime   = document.getElementById('last-action-time');
         lastAction.textContent = last.signals > 0
           ? last.signals + ' signal' + (last.signals>1?'s':'') + ' | Regime: ' + (last.regime||'--')
-          : 'Scanned â€” no signals';
+          : 'Scanned  no signals';
         lastAction.style.color = last.signals > 0 ? 'var(--gn)' : 'var(--mu2)';
-        lastTime.textContent = 'Cycle #' + last.cycle + ' â€” ' +
+        lastTime.textContent = 'Cycle #' + last.cycle + '  ' +
           new Date(last.ts).toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit'}) + ' IST';
       }
 

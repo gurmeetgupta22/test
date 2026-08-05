@@ -2,6 +2,7 @@ package com.example.max_alpha_mobile
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
@@ -11,21 +12,55 @@ import androidx.core.content.ContextCompat
 class MaxAlphaService : Service() {
     companion object {
         const val EXTRA_BUDGET = "budget"
+        const val ACTION_STOP = "com.maxalpha.mobile.ACTION_STOP"
         private const val CHANNEL = "max_alpha_running"
         private const val NOTIFICATION_ID = 4102
         @Volatile var isRunning = false
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Handle stop action from the notification itself
+        if (intent?.action == ACTION_STOP) {
+            try { BotRuntime.gateway(this).callAttr("stop_bot") } catch (_: Exception) { }
+            isRunning = false
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         createChannel()
+
+        // Tap notification → reopen the app
+        val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)
+            ?.apply { addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) }
+        val openPendingIntent = PendingIntent.getActivity(
+            this, 0, openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // "Stop bot" action button
+        val stopIntent = Intent(this, MaxAlphaService::class.java).apply { action = ACTION_STOP }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 1, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notification = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(com.example.max_alpha_mobile.R.mipmap.ic_launcher)
-            .setContentTitle("Max Alpha is running")
+            .setContentTitle("⚡ Max Alpha is running")
             .setContentText("Local Python trading engine is active on this device.")
+            .setSubText("Tap to open dashboard")
             .setOngoing(true)
+            .setContentIntent(openPendingIntent)
+            .addAction(android.R.drawable.ic_delete, "Stop Bot", stopPendingIntent)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
+
         startForeground(NOTIFICATION_ID, notification)
         isRunning = true
+
         val budget = intent?.getDoubleExtra(EXTRA_BUDGET, -1.0) ?: -1.0
         Thread {
             try {
@@ -51,6 +86,10 @@ class MaxAlphaService : Service() {
 
     private fun createChannel() {
         val manager = ContextCompat.getSystemService(this, NotificationManager::class.java) ?: return
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Max Alpha bot", NotificationManager.IMPORTANCE_LOW))
+        val channel = NotificationChannel(CHANNEL, "Max Alpha Bot", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Shown while the Max Alpha trading engine is active."
+            setShowBadge(false)
+        }
+        manager.createNotificationChannel(channel)
     }
 }

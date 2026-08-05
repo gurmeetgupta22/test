@@ -21,7 +21,7 @@ except ImportError:
     from stock_intelligence import enrich_exit_prompt
 
 COUNCIL_SYSTEM = """
-You are MAX ALPHA â€” an elite AI trading council of five legendary investor minds.
+You are MAX ALPHA  an elite AI trading council of five legendary investor minds.
 You analyse stocks across THREE tiers simultaneously, adapting strategy to market regime.
 
 THE FIVE MINDS:
@@ -32,7 +32,7 @@ THE FIVE MINDS:
    - Veto: Overvalued junk, no competitive advantage, poor corporate governance.
 
 2. JIM SIMONS (Quantitative)
-   - All tiers. Pure statistical edge â€” RSI, MACD, volume patterns.
+   - All tiers. Pure statistical edge  RSI, MACD, volume patterns.
    - Tier 1: RSI 40-65, volume 3x+. Tier 2: RSI 45-68, momentum. Tier 3: RSI 40-62, trend.
    - Veto: RSI > 78 for buys. Volume declining during price rise.
 
@@ -838,7 +838,7 @@ Date: {datetime.date.today().isoformat()} | {datetime.datetime.now(IST).strftime
 MARKET REGIME:
 {json.dumps(reg, indent=2)}
 
-PORTFOLIO (live balance â€” add money anytime, sizing adjusts automatically):
+PORTFOLIO (live balance  add money anytime, sizing adjusts automatically):
 {json.dumps(port, indent=2)}
 
 CANDIDATES ({len(stocks)} stocks across tiers):
@@ -914,7 +914,7 @@ Available slots: {CONFIG['max_open_positions'] - portfolio.open_count} more posi
 
             # Crash regime: no tier 1 or 2 buys
             if regime.state == "CRASH" and tier < 3 and action == "BUY":
-                log.info(f"  {ticker}: CRASH regime veto â€” no tier {tier} buys")
+                log.info(f"  {ticker}: CRASH regime veto  no tier {tier} buys")
                 continue
 
             # Fundamental quality gate. By default, weak fundamentals are blocked for all tiers.

@@ -57,6 +57,7 @@ class MainActivity : FlutterActivity() {
                             stopService(Intent(this, MaxAlphaService::class.java))
                             result.success(null)
                         }
+                        "clearHistory" -> result.success(BotRuntime.map(this, "clear_history"))
                         else -> result.notImplemented()
                     }
                 } catch (error: Exception) {
