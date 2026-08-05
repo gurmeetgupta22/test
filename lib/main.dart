@@ -200,6 +200,8 @@ class Session extends ChangeNotifier {
   bool isEngineRunning = false;
   bool isPolling = false;
   Timer? _poller;
+  Future<void> Function(Map<String, dynamic> dashboardData, List<String> logLines)?
+  onDashboardChanged;
 
   bool _mapEquals(Map<String, dynamic> a, Map<String, dynamic> b) {
     if (a.length != b.length) return false;
@@ -265,6 +267,9 @@ class Session extends ChangeNotifier {
       dash['running'] = isEngineRunning;
       dashboardData = dash;
       logLines = nextLines;
+      if (shouldNotify && onDashboardChanged != null) {
+        unawaited(onDashboardChanged!(dashboardData, logLines));
+      }
       if (shouldNotify) notifyListeners();
     } catch (_) {
     } finally {
@@ -2814,7 +2819,7 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
             ),
           );
     widget.session.addListener(_loadDashboardWhenTargetChanges);
-    widget.session.addListener(_syncDashboardWhenSessionChanges);
+    widget.session.onDashboardChanged = _syncDashboardFromSession;
     _loadDashboard();
   }
 
@@ -2822,14 +2827,6 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
     if (!_dashboardLoaded || _loadedDashboardUrl != widget.session.dashboardUrl) {
       _loadDashboard();
     }
-  }
-
-  void _syncDashboardWhenSessionChanges() {
-    if (!_dashboardLoaded || !mounted) return;
-    final signature = _sessionSignature();
-    if (signature == _lastSyncedSignature) return;
-    _lastSyncedSignature = signature;
-    _syncDashboardFromSession();
   }
 
   String _sessionSignature() {
@@ -2848,10 +2845,23 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
     ].join('|');
   }
 
-  Future<void> _syncDashboardFromSession() async {
+  Future<void> _syncDashboardFromSession(
+    Map<String, dynamic> dashboardData,
+    List<String> logLines,
+  ) async {
+    if (!_dashboardLoaded || !mounted) return;
+    final signature = [
+      dashboardData['cycle']?.toString() ?? '',
+      ((dashboardData['history'] as List?) ?? const []).length.toString(),
+      ((dashboardData['positions_detail'] as List?) ?? const []).length.toString(),
+      logLines.length.toString(),
+      dashboardData['running']?.toString() ?? '',
+    ].join('|');
+    if (signature == _lastSyncedSignature) return;
+    _lastSyncedSignature = signature;
     try {
       final history = jsonEncode(
-        (widget.session.dashboardData['history'] as List?) ?? const [],
+        (dashboardData['history'] as List?) ?? const [],
       );
       await _controller.runJavaScript('''
         (function() {
@@ -2924,7 +2934,7 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
   @override
   void dispose() {
     widget.session.removeListener(_loadDashboardWhenTargetChanges);
-    widget.session.removeListener(_syncDashboardWhenSessionChanges);
+    widget.session.onDashboardChanged = null;
     super.dispose();
   }
 
