@@ -541,8 +541,8 @@ function boot(){
   startClock();
   loadAll();
   updateAgentStatus();
-  refInt=setInterval(loadAll,30000);
-  setInterval(updateAgentStatus, 60000);
+  refInt=setInterval(loadAll,5000);
+  setInterval(updateAgentStatus, 15000);
 }
 
 // CLOCK
@@ -641,7 +641,7 @@ function initCharts(){
 }
 
 // DHAN  all data comes from performance_v4.json (CORS blocks direct API calls from browser)
-function loadAll(){fetchAccount();renderPnlFromHistory();}
+function loadAll(){fetchAccount();renderPnlFromHistory();loadPerformanceLog();}
 
 // Android and iOS load this page from a file:// asset URL. WebView blocks
 // file:// fetches, so Flutter injects the current on-device Python history
@@ -1201,7 +1201,7 @@ function updateAgentStatus() {
       'Agent running 15-minute cycles. Each cycle: scans 30+ stocks across ' +
       'Tier 1 (smallcap momentum), Tier 2 (midcap), Tier 3 (blue chip/ETF), ' +
       'scores them with 8 alpha signals, and Claude AI decides whether to buy or sell. ' +
-      'Portfolio and positions below update every 30 seconds.';
+    'Portfolio and positions below update live when new cycle data arrives.';
     badge.textContent='TRADING ACTIVE';
     badge.style.background='var(--bd)';
     badge.style.color='var(--bl)';

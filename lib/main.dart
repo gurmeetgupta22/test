@@ -2795,6 +2795,7 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
   bool? _appliedDarkTheme;
   String? _loadedDashboardUrl;
   bool _dashboardLoaded = false;
+  String _lastSyncedSignature = '';
 
   @override
   void initState() {
@@ -2813,6 +2814,7 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
             ),
           );
     widget.session.addListener(_loadDashboardWhenTargetChanges);
+    widget.session.addListener(_syncDashboardWhenSessionChanges);
     _loadDashboard();
   }
 
@@ -2820,6 +2822,46 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
     if (!_dashboardLoaded || _loadedDashboardUrl != widget.session.dashboardUrl) {
       _loadDashboard();
     }
+  }
+
+  void _syncDashboardWhenSessionChanges() {
+    if (!_dashboardLoaded || !mounted) return;
+    final signature = _sessionSignature();
+    if (signature == _lastSyncedSignature) return;
+    _lastSyncedSignature = signature;
+    _syncDashboardFromSession();
+  }
+
+  String _sessionSignature() {
+    final data = widget.session.dashboardData;
+    final history = (data['history'] as List?) ?? const [];
+    final positions = (data['positions_detail'] as List?) ?? const [];
+    final tradeStats = (data['trade_stats'] as Map<String, dynamic>?) ?? const {};
+    return [
+      data['cycle']?.toString() ?? '',
+      history.length.toString(),
+      positions.length.toString(),
+      tradeStats['wins']?.toString() ?? '',
+      tradeStats['losses']?.toString() ?? '',
+      widget.session.logLines.length.toString(),
+      widget.session.isEngineRunning.toString(),
+    ].join('|');
+  }
+
+  Future<void> _syncDashboardFromSession() async {
+    try {
+      final history = jsonEncode(
+        (widget.session.dashboardData['history'] as List?) ?? const [],
+      );
+      await _controller.runJavaScript('''
+        (function() {
+          if ($history !== null) window.__maxAlphaHistory = $history;
+          if (typeof loadAll === 'function') loadAll();
+          if (typeof loadPerformanceLog === 'function') loadPerformanceLog();
+          if (typeof updateAgentStatus === 'function') updateAgentStatus();
+        })();
+      ''');
+    } catch (_) {}
   }
 
   Future<void> _loadDashboard() async {
@@ -2882,6 +2924,7 @@ class _ExactDashboardPageState extends State<ExactDashboardPage> {
   @override
   void dispose() {
     widget.session.removeListener(_loadDashboardWhenTargetChanges);
+    widget.session.removeListener(_syncDashboardWhenSessionChanges);
     super.dispose();
   }
 
@@ -3446,7 +3489,7 @@ class SettingsPage extends StatelessWidget {
               style: TextStyle(color: kRed, fontWeight: FontWeight.bold),
             ),
             content: Text(
-              'This will delete performance_v4.json, paper_signals.json, and symbol_map.json.\n\nThis action cannot be undone.',
+              'This will delete performance_v4.json and paper_signals.json.\n\nThis action cannot be undone.',
               style: TextStyle(color: kTextSub, fontSize: 13, height: 1.5),
             ),
             actions: [
@@ -3654,7 +3697,7 @@ class SettingsPage extends StatelessWidget {
         context,
         icon: Icons.delete_sweep_rounded,
         title: 'Clear Bot History',
-        subtitle: 'Delete performance_v4.json, signals & symbol_map',
+        subtitle: 'Delete performance_v4.json and paper signals',
         onTap: () => _clearHistory(context),
         iconColor: kRed,
       ),

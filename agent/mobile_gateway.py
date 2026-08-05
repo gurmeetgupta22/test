@@ -355,10 +355,10 @@ def dashboard() -> Dict[str, Any]:
 
 
 def clear_history() -> Dict[str, Any]:
-    """Delete performance_v4.json, paper_signals.json, and reset history."""
+    """Delete performance_v4.json and paper_signals.json, then reset history."""
     _prepare_runtime()
     cleared_files = []
-    for filename in ["performance_v4.json", "paper_signals.json", "symbol_map.json"]:
+    for filename in ["performance_v4.json", "paper_signals.json"]:
         p = Path(filename)
         if p.exists():
             try:
